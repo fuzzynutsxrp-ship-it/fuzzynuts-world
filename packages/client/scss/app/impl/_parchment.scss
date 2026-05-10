@@ -3,7 +3,7 @@
 #parchment {
     top: -3em;
     width: 38em;
-    height: 19em;
+    height: 22em;
     opacity: 0;
 
     select {
@@ -36,7 +36,7 @@
 
     box-sizing: border-box;
     width: 24em;
-    height: 16.5em;
+    height: 20em;
     margin: auto;
     padding: 0 0.25em;
 
@@ -170,62 +170,71 @@
 .wallet-divider {
     display: flex;
     align-items: center;
-    margin: 0.3em 0;
-    gap: 0.5em;
+    margin: 0.15em 0;
+    gap: 0.4em;
 
     &::before,
     &::after {
         content: '';
         flex: 1;
         height: 1px;
-        background: rgb(255 255 255 / 30%);
+        background: linear-gradient(90deg, transparent, rgb(255 255 255 / 25%), transparent);
     }
 
     span {
-        font-size: 0.7em;
-        color: rgb(255 255 255 / 60%);
+        font-size: 0.6em;
+        color: rgb(255 255 255 / 50%);
         white-space: nowrap;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.12em;
     }
 }
 
 .wallet-button {
-    background: linear-gradient(135deg, #d4a017, #b8860b) !important;
-    border: 1px solid #ffd700 !important;
+    background: linear-gradient(135deg, #d4a017 0%, #c69320 50%, #b8860b 100%) !important;
+    border: 1px solid rgb(255 215 0 / 60%) !important;
     color: #1a1a2e !important;
     font-weight: bold !important;
-    font-size: 0.75em !important;
+    font-size: 0.65em !important;
     text-shadow: none !important;
-    transition: filter 0.15s ease, transform 0.1s ease;
+    transition: filter 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+    width: auto !important;
+    min-width: 5em;
+    padding: 0.3em 0.5em !important;
+    box-shadow: 0 2px 4px rgb(0 0 0 / 30%);
 
     &:hover {
         filter: brightness(1.2);
-        transform: scale(1.02);
+        transform: translateY(-1px);
+        box-shadow: 0 3px 8px rgb(255 215 0 / 25%);
     }
 
     &:active {
-        transform: scale(0.98);
+        transform: translateY(0) scale(0.98);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 40%);
     }
 }
 
 .wallet-row {
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.3em !important;
-    margin-top: 0.15em !important;
+    margin-top: 0.1em !important;
+    justify-content: center;
 }
 
 .joey-input-row {
     display: flex;
     gap: 0.3em;
-    margin-top: 0.3em;
+    margin-top: 0.2em;
 
     input {
         flex: 1;
-        font-size: 0.75em !important;
+        font-size: 0.7em !important;
     }
 
     .wallet-button {
-        width: 6em !important;
-        font-size: 0.7em !important;
+        width: 5.5em !important;
+        font-size: 0.65em !important;
     }
 }
