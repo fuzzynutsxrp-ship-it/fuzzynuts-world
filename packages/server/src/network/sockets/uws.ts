@@ -1,5 +1,6 @@
 import WebSocket from '../websocket';
 import Connection from '../connection';
+import ScoresAPI from '../../api/scores';
 
 import log from '@kaetram/common/util/log';
 import config from '@kaetram/common/config';
@@ -11,14 +12,57 @@ import type SocketHandler from '../sockethandler';
 import type { HeaderWebSocket } from '../connection';
 import type { WebSocket as WS, HttpRequest, HttpResponse, us_socket_context_t } from 'uws';
 import type { ConnectionInfo } from '@kaetram/common/types/network';
+import type MongoDB from '@kaetram/common/database/mongodb/mongodb';
 
 export default class UWS extends WebSocket {
-    public constructor(socketHandler: SocketHandler) {
+    private scoresAPI?: ScoresAPI;
+
+    public constructor(socketHandler: SocketHandler, database?: MongoDB) {
         super(config.host, config.port, socketHandler);
 
-        App({})
-            .get('/*', this.httpResponse.bind(this))
-            .ws('/*', {
+        // Initialize the Scores API if database is available
+        const db = database?.getDb();
+        if (db) {
+            this.scoresAPI = new ScoresAPI(db);
+            log.info('[UWS] Scores API routes registered at /api/scores');
+        }
+
+        const app = App({});
+
+        // ── Register API routes BEFORE catch-all static handler ──
+        app.get('/api/scores', (res: HttpResponse, req: HttpRequest) => {
+            if (this.scoresAPI) this.scoresAPI.handleGet(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.post('/api/scores', (res: HttpResponse, req: HttpRequest) => {
+            if (this.scoresAPI) this.scoresAPI.handlePost(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.options('/api/scores', (res: HttpResponse) => {
+            if (this.scoresAPI) this.scoresAPI.handleOptions(res);
+            else {
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end();
+            }
+        });
+
+        // ── Static file handler (catch-all) ──
+        app.get('/*', this.httpResponse.bind(this));
+
+        // ── WebSocket handler ──
+        app.ws('/*', {
                 compression: DISABLED,
                 idleTimeout: 15,
                 maxPayloadLength: 32 * 1024 * 1024,

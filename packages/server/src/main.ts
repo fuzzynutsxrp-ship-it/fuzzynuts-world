@@ -15,7 +15,7 @@ import type MongoDB from '@kaetram/common/database/mongodb/mongodb';
 
 class Main {
     private world?: World;
-    private socketHandler: SocketHandler = new SocketHandler();
+    private socketHandler?: SocketHandler;
     private database: MongoDB = new Database(config.database).getDatabase()!;
 
     private ready = false;
@@ -24,8 +24,6 @@ class Main {
         if (!this.handleLicensing()) return;
 
         log.info(`Initializing ${config.name} game engine...`);
-
-        this.socketHandler.onConnection(this.handleConnection.bind(this));
 
         this.database.onReady(this.handleReady.bind(this));
         this.database.onFail(this.handleFail.bind(this));
@@ -43,6 +41,8 @@ class Main {
      */
 
     private loadWorld(): void {
+        if (!this.socketHandler) return;
+
         log.info(`************** ${config.name} World **************`);
 
         this.world = new World(this.socketHandler, this.database);
@@ -72,11 +72,16 @@ class Main {
 
     /**
      * The handle ready callback function for when the database finishes initializing.
+     * Creates the socket handler with database access so the Scores API is available.
      * @param withoutDatabase Boolean if to display logs that we are running without database.
      */
 
     private handleReady(withoutDatabase = false): void {
         this.ready = true;
+
+        // Create socket handler with database reference for Scores API
+        this.socketHandler = new SocketHandler(withoutDatabase ? undefined : this.database);
+        this.socketHandler.onConnection(this.handleConnection.bind(this));
 
         this.loadWorld();
 

@@ -3,6 +3,7 @@ import UWS from './sockets/uws';
 import { Modules } from '@kaetram/common/network';
 
 import type Connection from './connection';
+import type MongoDB from '@kaetram/common/database/mongodb/mongodb';
 
 interface Addresses {
     [address: string]: {
@@ -17,8 +18,8 @@ export default class SocketHandler {
 
     private connectionCallback?: (connection: Connection) => void;
 
-    public constructor() {
-        new UWS(this).onAdd(this.add.bind(this));
+    public constructor(database?: MongoDB) {
+        new UWS(this, database).onAdd(this.add.bind(this));
     }
 
     /**

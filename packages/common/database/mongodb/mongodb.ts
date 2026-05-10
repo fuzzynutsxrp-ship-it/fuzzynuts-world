@@ -551,6 +551,15 @@ export default class MongoDB {
     }
 
     /**
+     * Returns the raw MongoDB Db instance for use by external modules (e.g. Scores API).
+     * @returns The MongoDB Db instance or undefined if not connected.
+     */
+
+    public getDb(): Db | undefined {
+        return this.database;
+    }
+
+    /**
      * Callback signal if connection is successfully established.
      */
 
