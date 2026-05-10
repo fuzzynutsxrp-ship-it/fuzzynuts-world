@@ -17,6 +17,7 @@ import Loitering from './skill/impl/loitering';
 import Alchemy from './skill/impl/alchemy';
 
 import Formulas from '../../../../info/formulas';
+import { trackRewardVelocity } from '../../../../api/scores';
 
 import log from '@kaetram/common/util/log';
 
@@ -238,6 +239,14 @@ export default class Skills {
                     idempotency_key: `${wallet}:skill:${skillKey}:lv${level}`
                 });
                 log.info(`[Rewards] Queued ${amount} $NUT for ${username} (${skillName} lv${level})`);
+                trackRewardVelocity(wallet);
+
+                // In-game toast notification
+                this.player.popup(
+                    '🥜 Skill Reward!',
+                    `You earned ${amount.toLocaleString()} $NUT for reaching ${skillName} level ${level}!`,
+                    'rgba(191, 161, 63, 1.0)'
+                );
             } catch (error: any) {
                 if (error.code !== 11000)
                     log.error(`[Rewards] Failed to queue skill level reward: ${error.message}`);

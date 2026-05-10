@@ -54,6 +54,57 @@ const XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 
 const rateLimits: Map<string, number> = new Map();
 
+// ── Anti-bot reward velocity tracker (in-memory) ──
+// Tracks reward_queue insertions per wallet per hour. Flags >10/hr for review.
+
+interface VelocityEntry {
+    timestamps: number[];
+    flagged: boolean;
+    flaggedAt?: number;
+}
+
+const rewardVelocity: Map<string, VelocityEntry> = new Map();
+const VELOCITY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const VELOCITY_THRESHOLD = 10; // Max rewards per hour before flagging
+
+/**
+ * Record a reward event for velocity tracking. Returns true if the wallet
+ * is now flagged (superhuman rate detected).
+ */
+export function trackRewardVelocity(wallet: string): boolean {
+    const now = Date.now();
+    let entry = rewardVelocity.get(wallet);
+    if (!entry) entry = { timestamps: [], flagged: false };
+
+    // Trim old timestamps outside the window
+    entry.timestamps = entry.timestamps.filter(t => now - t < VELOCITY_WINDOW_MS);
+    entry.timestamps.push(now);
+
+    if (entry.timestamps.length > VELOCITY_THRESHOLD && !entry.flagged) {
+        entry.flagged = true;
+        entry.flaggedAt = now;
+        log.warning(`[AntiBot] 🚨 Wallet ${wallet} flagged: ${entry.timestamps.length} rewards in 1hr (threshold: ${VELOCITY_THRESHOLD})`);
+    }
+
+    rewardVelocity.set(wallet, entry);
+    return entry.flagged;
+}
+
+/**
+ * Get all currently flagged wallets for admin review.
+ */
+export function getFlaggedWallets(): { wallet: string; count: number; flaggedAt: number }[] {
+    const flagged: { wallet: string; count: number; flaggedAt: number }[] = [];
+    const now = Date.now();
+    for (const [wallet, entry] of rewardVelocity) {
+        if (entry.flagged) {
+            const recentCount = entry.timestamps.filter(t => now - t < VELOCITY_WINDOW_MS).length;
+            flagged.push({ wallet, count: recentCount, flaggedAt: entry.flaggedAt! });
+        }
+    }
+    return flagged;
+}
+
 function isRateLimited(key: string): boolean {
     const last = rateLimits.get(key);
     if (last && Date.now() - last < RATE_LIMIT_MS) return true;

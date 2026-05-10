@@ -1,4 +1,5 @@
 import QuestIndex from './quest/impl';
+import { trackRewardVelocity } from '../../../../api/scores';
 
 import log from '@kaetram/common/util/log';
 import { Modules, Opcodes } from '@kaetram/common/network';
@@ -136,6 +137,14 @@ export default class Quests {
                     idempotency_key: `${wallet}:quest:${questKey}`
                 });
                 log.info(`[Rewards] Queued ${amount} $NUT for ${username} (quest:${questKey})`);
+                trackRewardVelocity(wallet);
+
+                // In-game toast notification
+                this.player.popup(
+                    '🥜 Quest Reward!',
+                    `You earned ${amount.toLocaleString()} $NUT for completing this quest!`,
+                    'rgba(191, 161, 63, 1.0)'
+                );
             } catch (error: any) {
                 if (error.code !== 11000)
                     log.error(`[Rewards] Failed to queue quest reward: ${error.message}`);

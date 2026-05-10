@@ -372,6 +372,19 @@ export default class Incoming {
                     idempotency_key: `${wallet}:login:${today}`
                 });
                 log.info(`[Rewards] Queued ${amount} $NUT for ${username} (login day ${streak})`);
+
+                // Anti-bot velocity tracking
+                try {
+                    const { trackRewardVelocity } = await import('../../../../api/scores');
+                    trackRewardVelocity(wallet);
+                } catch { /* non-critical */ }
+
+                // In-game toast notification
+                this.player.popup(
+                    '🥜 Daily Login!',
+                    `You earned ${amount.toLocaleString()} $NUT! Login streak: ${streak} day${streak > 1 ? 's' : ''}!`,
+                    'rgba(191, 161, 63, 1.0)'
+                );
             } catch (error: any) {
                 if (error.code !== 11000)
                     log.error(`[Rewards] Failed to queue login reward: ${error.message}`);

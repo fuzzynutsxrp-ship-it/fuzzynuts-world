@@ -1,4 +1,5 @@
 import Achievement from './achievement/achievement';
+import { trackRewardVelocity } from '../../../../api/scores';
 
 import achievements from '../../../../../data/achievements.json';
 import Item from '../../objects/item';
@@ -146,6 +147,14 @@ export default class Achievements {
                     idempotency_key: `${wallet}:${achievementKey}`
                 });
                 log.info(`[Rewards] Queued ${amount} $NUT for ${username} (${achievementKey})`);
+                trackRewardVelocity(wallet);
+
+                // In-game toast notification
+                this.player.popup(
+                    '🥜 $NUT Reward!',
+                    `You earned ${amount.toLocaleString()} $NUT for completing this achievement!`,
+                    'rgba(191, 161, 63, 1.0)'
+                );
             } catch (error: any) {
                 // Code 11000 = duplicate key — already queued, this is expected (idempotent)
                 if (error.code !== 11000)
