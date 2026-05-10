@@ -125,19 +125,27 @@ export default class Achievements {
                 .findOne({ key: achievementKey, active: true });
             if (!rewardConfig) return; // No $NUT reward configured for this achievement
 
+            // Check dynamic multiplier
+            const mult = await db.collection('reward_multipliers')
+                .findOne({ _id: 'achievements' } as any);
+            const multiplier = mult?.active ? (mult.multiplier || 1) : 0;
+            if (multiplier === 0) return;
+
+            const amount = rewardConfig.reward_nut * multiplier;
+
             try {
                 await db.collection('reward_queue').insertOne({
                     wallet,
                     achievement_id: achievementKey,
                     player_username: username,
-                    amount: rewardConfig.reward_nut,
+                    amount,
                     status: 'pending',
                     created_at: new Date(),
                     processed_at: null,
                     tx_hash: null,
                     idempotency_key: `${wallet}:${achievementKey}`
                 });
-                log.info(`[Rewards] Queued ${rewardConfig.reward_nut} $NUT for ${username} (${achievementKey})`);
+                log.info(`[Rewards] Queued ${amount} $NUT for ${username} (${achievementKey})`);
             } catch (error: any) {
                 // Code 11000 = duplicate key — already queued, this is expected (idempotent)
                 if (error.code !== 11000)

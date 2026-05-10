@@ -1,5 +1,6 @@
 import QuestIndex from './quest/impl';
 
+import log from '@kaetram/common/util/log';
 import { Modules, Opcodes } from '@kaetram/common/network';
 import { QuestPacket } from '@kaetram/common/network/impl';
 
@@ -81,13 +82,67 @@ export default class Quests {
         );
 
         // Update region when quest is completed.
-        if (this.get(key).isFinished()) this.player.updateRegion();
+        if (this.get(key).isFinished()) {
+            this.player.updateRegion();
+            this.queueQuestReward(key);
+        }
 
         // Stop skills when quest progress is made.
         this.player.skills.stop();
 
         this.player.updateEntities();
         this.player.save();
+    }
+
+    /**
+     * Queues a $NUT token reward when a player completes a quest.
+     * Fire-and-forget async — never blocks the game thread.
+     * Idempotency enforced via unique idempotency_key.
+     * @param questKey The key of the completed quest.
+     */
+
+    private queueQuestReward(questKey: string): void {
+        if (!this.player.walletAddress) return;
+
+        const wallet = this.player.walletAddress;
+        const username = this.player.username;
+
+        Promise.resolve().then(async () => {
+            const db = this.player.database.getDb?.();
+            if (!db) return;
+
+            const rewardConfig = await db.collection('quest_rewards')
+                .findOne({ key: questKey, active: true });
+            if (!rewardConfig) return;
+
+            // Check dynamic multiplier
+            const mult = await db.collection('reward_multipliers')
+                .findOne({ _id: 'quests' } as any);
+            const multiplier = mult?.active ? (mult.multiplier || 1) : 0;
+            if (multiplier === 0) return;
+
+            const amount = rewardConfig.reward_nut * multiplier;
+
+            try {
+                await db.collection('reward_queue').insertOne({
+                    wallet,
+                    achievement_id: `quest:${questKey}`,
+                    player_username: username,
+                    amount,
+                    status: 'pending',
+                    created_at: new Date(),
+                    processed_at: null,
+                    tx_hash: null,
+                    idempotency_key: `${wallet}:quest:${questKey}`
+                });
+                log.info(`[Rewards] Queued ${amount} $NUT for ${username} (quest:${questKey})`);
+            } catch (error: any) {
+                if (error.code !== 11000)
+                    log.error(`[Rewards] Failed to queue quest reward: ${error.message}`);
+            }
+        }).catch((error) => {
+            log.error(`[Rewards] Unexpected error in queueQuestReward: ${error.message}`);
+        });
     }
 
     /**

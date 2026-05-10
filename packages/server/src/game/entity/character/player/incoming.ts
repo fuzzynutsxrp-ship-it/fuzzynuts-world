@@ -295,9 +295,89 @@ export default class Incoming {
 
         this.player.welcome();
 
+        // ── Daily Login $NUT Reward ──
+        this.queueDailyLoginReward();
+
         // A secondary check after the player has fully loaded in.
         this.world.api.isPlayerOnline(this.player.username, (online: boolean) => {
             if (online) this.player.connection.reject('loggedin');
+        });
+    }
+
+    /**
+     * Queues a $NUT reward for daily login streaks.
+     * Fire-and-forget async — tracks streak in `daily_login_tracker` collection.
+     */
+
+    private queueDailyLoginReward(): void {
+        if (!this.player.walletAddress) return;
+
+        const wallet = this.player.walletAddress;
+        const username = this.player.username;
+
+        Promise.resolve().then(async () => {
+            const db = this.database.getDb?.();
+            if (!db) return;
+
+            const trackerCol = db.collection('daily_login_tracker');
+            const configCol = db.collection('daily_login_config');
+            const multCol = db.collection('reward_multipliers');
+            const queueCol = db.collection('reward_queue');
+
+            const now = new Date();
+            const tracker = await trackerCol.findOne({ wallet });
+
+            let streak = 1;
+            if (tracker) {
+                const lastClaim = new Date(tracker.last_claim);
+                const hoursSince = (now.getTime() - lastClaim.getTime()) / (1000 * 60 * 60);
+
+                if (hoursSince < 20) return; // Already claimed today (20h cooldown)
+                if (hoursSince < 48) streak = (tracker.streak || 0) + 1; // Continue streak
+                // else streak resets to 1
+            }
+
+            // Update tracker
+            await trackerCol.updateOne(
+                { wallet },
+                { $set: { wallet, username, last_claim: now, streak } },
+                { upsert: true }
+            );
+
+            // Find the highest matching streak tier
+            const tiers = await configCol.find({ active: true, streak: { $lte: streak } })
+                .sort({ streak: -1 }).limit(1).toArray();
+            if (tiers.length === 0) return;
+
+            const tier = tiers[0];
+
+            // Check multiplier
+            const mult = await multCol.findOne({ _id: 'logins' } as any);
+            const multiplier = mult?.active ? (mult.multiplier || 1) : 0;
+            if (multiplier === 0) return;
+
+            const amount = tier.reward_nut * multiplier;
+            const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+            try {
+                await queueCol.insertOne({
+                    wallet,
+                    achievement_id: `login:${today}`,
+                    player_username: username,
+                    amount,
+                    status: 'pending',
+                    created_at: now,
+                    processed_at: null,
+                    tx_hash: null,
+                    idempotency_key: `${wallet}:login:${today}`
+                });
+                log.info(`[Rewards] Queued ${amount} $NUT for ${username} (login day ${streak})`);
+            } catch (error: any) {
+                if (error.code !== 11000)
+                    log.error(`[Rewards] Failed to queue login reward: ${error.message}`);
+            }
+        }).catch((error) => {
+            log.error(`[Rewards] Unexpected error in queueDailyLoginReward: ${error.message}`);
         });
     }
 

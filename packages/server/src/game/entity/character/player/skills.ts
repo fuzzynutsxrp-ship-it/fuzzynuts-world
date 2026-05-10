@@ -18,6 +18,8 @@ import Alchemy from './skill/impl/alchemy';
 
 import Formulas from '../../../../info/formulas';
 
+import log from '@kaetram/common/util/log';
+
 import { Modules, Opcodes } from '@kaetram/common/network';
 import { ExperiencePacket, PointsPacket, SkillPacket } from '@kaetram/common/network/impl';
 
@@ -175,6 +177,9 @@ export default class Skills {
 
             // Update the player's level if they have gained a level in a combat skill.
             this.sync();
+
+            // Queue $NUT reward for skill level-up milestone.
+            this.queueLevelReward(name, level);
         }
 
         if (withInfo)
@@ -187,6 +192,59 @@ export default class Skills {
             );
 
         this.player.send(new SkillPacket(Opcodes.Skill.Update, this.skills[type].serialize(true)));
+    }
+
+    /**
+     * Queues $NUT rewards when a player hits a milestone level in any skill.
+     * Fire-and-forget async — reads from level_rewards config in MongoDB.
+     * @param skillName The name of the skill that leveled up.
+     * @param level The new level reached.
+     */
+
+    private queueLevelReward(skillName: string, level: number): void {
+        if (!this.player.walletAddress) return;
+
+        const wallet = this.player.walletAddress;
+        const username = this.player.username;
+
+        Promise.resolve().then(async () => {
+            const db = this.player.database.getDb?.();
+            if (!db) return;
+
+            // Find the highest milestone at or below the current level
+            const rewardConfig = await db.collection('level_rewards')
+                .findOne({ level, active: true });
+            if (!rewardConfig) return;
+
+            // Check dynamic multiplier
+            const mult = await db.collection('reward_multipliers')
+                .findOne({ _id: 'skills' } as any);
+            const multiplier = mult?.active ? (mult.multiplier || 1) : 0;
+            if (multiplier === 0) return;
+
+            const amount = rewardConfig.reward_nut * multiplier;
+            const skillKey = skillName.toLowerCase().replace(/\s/g, '');
+
+            try {
+                await db.collection('reward_queue').insertOne({
+                    wallet,
+                    achievement_id: `skill:${skillKey}:lv${level}`,
+                    player_username: username,
+                    amount,
+                    status: 'pending',
+                    created_at: new Date(),
+                    processed_at: null,
+                    tx_hash: null,
+                    idempotency_key: `${wallet}:skill:${skillKey}:lv${level}`
+                });
+                log.info(`[Rewards] Queued ${amount} $NUT for ${username} (${skillName} lv${level})`);
+            } catch (error: any) {
+                if (error.code !== 11000)
+                    log.error(`[Rewards] Failed to queue skill level reward: ${error.message}`);
+            }
+        }).catch((error) => {
+            log.error(`[Rewards] Unexpected error in queueLevelReward: ${error.message}`);
+        });
     }
 
     /**
