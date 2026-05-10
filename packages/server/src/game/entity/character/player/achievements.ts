@@ -3,6 +3,8 @@ import Achievement from './achievement/achievement';
 import achievements from '../../../../../data/achievements.json';
 import Item from '../../objects/item';
 
+import log from '@kaetram/common/util/log';
+
 import { Opcodes } from '@kaetram/common/network';
 import { AchievementPacket } from '@kaetram/common/network/impl';
 
@@ -54,14 +56,17 @@ export default class Achievements {
 
     /**
      * Handles the reward of an achievement when it is finished.
+     * @param key The key of the achievement that was finished.
+     * @param skill The skill to reward experience to.
+     * @param experience How much experience we are rewarding to the player.
      * @param itemKey The key of the item we are rewarding.
      * @param itemCount Amount of an item we are rewarding.
-     * @param experience How much experience we are rewarding to the player.
      * @param ability The ability we are rewarding.
      * @param abilityLevel The level of the ability we are rewarding.
      */
 
     private handleFinish(
+        key: string,
         skill: Modules.Skills,
         experience?: number,
         itemKey?: string,
@@ -90,9 +95,57 @@ export default class Achievements {
         // Add ability if it exists.
         if (ability) this.player.abilities.add(ability, abilityLevel!);
 
+        // Queue $NUT reward if this achievement has one configured.
+        this.queueNutReward(key);
+
         // Update dynamic tiles.
         this.player.updateRegion();
         this.player.save();
+    }
+
+    /**
+     * Queues a $NUT token reward when a player completes an achievement.
+     * Fire-and-forget async — never blocks the game thread.
+     * Idempotency enforced via compound unique index on (wallet, achievement_id).
+     * @param achievementKey The key of the completed achievement.
+     */
+
+    private queueNutReward(achievementKey: string): void {
+        if (!this.player.walletAddress) return; // Guest/no-wallet — skip
+
+        const wallet = this.player.walletAddress;
+        const username = this.player.username;
+
+        // Fire-and-forget to avoid blocking game thread
+        Promise.resolve().then(async () => {
+            const db = this.player.database.getDb?.();
+            if (!db) return;
+
+            const rewardConfig = await db.collection('achievement_rewards')
+                .findOne({ key: achievementKey, active: true });
+            if (!rewardConfig) return; // No $NUT reward configured for this achievement
+
+            try {
+                await db.collection('reward_queue').insertOne({
+                    wallet,
+                    achievement_id: achievementKey,
+                    player_username: username,
+                    amount: rewardConfig.reward_nut,
+                    status: 'pending',
+                    created_at: new Date(),
+                    processed_at: null,
+                    tx_hash: null,
+                    idempotency_key: `${wallet}:${achievementKey}`
+                });
+                log.info(`[Rewards] Queued ${rewardConfig.reward_nut} $NUT for ${username} (${achievementKey})`);
+            } catch (error: any) {
+                // Code 11000 = duplicate key — already queued, this is expected (idempotent)
+                if (error.code !== 11000)
+                    log.error(`[Rewards] Failed to queue reward: ${error.message}`);
+            }
+        }).catch((error) => {
+            log.error(`[Rewards] Unexpected error in queueNutReward: ${error.message}`);
+        });
     }
 
     /**

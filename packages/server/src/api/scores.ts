@@ -356,6 +356,103 @@ export default class ScoresAPI {
         });
     }
 
+    // ── GET /api/rewards?wallet=rXXX ──
+
+    public async handleRewardsGet(response: HttpResponse, request: HttpRequest): Promise<void> {
+        let aborted = false;
+        response.onAborted(() => { aborted = true; });
+
+        try {
+            const query = request.getQuery();
+            const params = new URLSearchParams(query);
+            const wallet = params.get('wallet');
+
+            if (!wallet || !XRPL_ADDRESS_RE.test(wallet)) {
+                return this.respond(response, aborted, 400, { ok: false, error: 'invalid_wallet' });
+            }
+
+            const rewardsCol = this.database.collection('reward_queue');
+            const configCol = this.database.collection('achievement_rewards');
+
+            // Fetch all rewards for this wallet
+            const rewards = await rewardsCol
+                .find({ wallet })
+                .sort({ created_at: -1 })
+                .limit(50)
+                .toArray();
+
+            // Fetch all active achievement reward configs for display
+            const configs = await configCol
+                .find({ active: true })
+                .toArray();
+
+            const configMap = new Map(configs.map((c: any) => [c.key, c]));
+
+            // Build response — strip internal fields (ip, player_username)
+            const rewardList = rewards.map((r: any) => ({
+                achievement_id: r.achievement_id,
+                achievement_name: (configMap.get(r.achievement_id) as any)?.name || r.achievement_id,
+                achievement_desc: (configMap.get(r.achievement_id) as any)?.desc || '',
+                amount: r.amount,
+                status: r.status,
+                tx_hash: r.tx_hash || null,
+                unlocked_at: r.created_at,
+                paid_at: r.processed_at || null
+            }));
+
+            // Available achievements (not yet unlocked by this wallet)
+            const unlockedIds = new Set(rewards.map((r: any) => r.achievement_id));
+            const available = configs
+                .filter((c: any) => !unlockedIds.has(c.key))
+                .map((c: any) => ({
+                    achievement_id: c.key,
+                    name: c.name,
+                    desc: c.desc,
+                    reward_nut: c.reward_nut
+                }));
+
+            const responseBody = JSON.stringify({
+                ok: true,
+                wallet: truncateAddress(wallet),
+                rewards: rewardList,
+                available,
+                total_earned: rewardList.reduce((sum: number, r: any) => sum + r.amount, 0),
+                total_paid: rewardList.filter((r: any) => r.status === 'paid').reduce((sum: number, r: any) => sum + r.amount, 0)
+            });
+
+            if (!aborted) {
+                response.cork(() => {
+                    response.writeHeader('Content-Type', 'application/json');
+                    response.writeHeader('Access-Control-Allow-Origin', '*');
+                    response.end(responseBody);
+                });
+            }
+        } catch (error) {
+            log.error('[ScoresAPI] GET /api/rewards error:');
+            log.error(error);
+            if (!aborted) {
+                response.cork(() => {
+                    response.writeStatus('500 Internal Server Error');
+                    response.writeHeader('Content-Type', 'application/json');
+                    response.writeHeader('Access-Control-Allow-Origin', '*');
+                    response.end(JSON.stringify({ ok: false, error: 'internal_error' }));
+                });
+            }
+        }
+    }
+
+    // ── OPTIONS /api/rewards (CORS preflight) ──
+
+    public handleRewardsOptions(response: HttpResponse): void {
+        response.cork(() => {
+            response.writeHeader('Access-Control-Allow-Origin', '*');
+            response.writeHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+            response.writeHeader('Access-Control-Allow-Headers', 'Content-Type');
+            response.writeHeader('Access-Control-Max-Age', '86400');
+            response.end();
+        });
+    }
+
     // ── Helper ──
 
     private respond(response: HttpResponse, aborted: boolean, status: number, body: object): void {

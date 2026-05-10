@@ -58,6 +58,25 @@ export default class UWS extends WebSocket {
             }
         });
 
+        // ── Achievement Rewards API routes ──
+        app.get('/api/rewards', (res: HttpResponse, req: HttpRequest) => {
+            if (this.scoresAPI) this.scoresAPI.handleRewardsGet(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.options('/api/rewards', (res: HttpResponse) => {
+            if (this.scoresAPI) this.scoresAPI.handleRewardsOptions(res);
+            else {
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end();
+            }
+        });
+
         // ── Static file handler (catch-all) ──
         app.get('/*', this.httpResponse.bind(this));
 

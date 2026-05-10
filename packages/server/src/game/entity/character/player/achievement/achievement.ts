@@ -16,6 +16,7 @@ import type Player from '../player';
  */
 
 type FinishCallback = (
+    key: string,
     skill: Modules.Skills,
     experience?: number,
     item?: string,
@@ -190,6 +191,7 @@ export default class Achievement {
             // Achievement is finished!
             this.popupCallback?.(this.getFinishPopup());
             this.finishCallback?.(
+                this.key,
                 this.rewardSkill,
                 this.rewardExperience,
                 this.rewardItem,
