@@ -13,6 +13,8 @@ export interface LoginPacket {
     username?: string;
     password?: string;
     email?: string;
+    walletAddress?: string;
+    walletType?: string;
 }
 
 export interface EquipmentPacket {

@@ -79,6 +79,73 @@ let currentLanguage = getLanguage(),
                         NEW ACCOUNT
                     </button>
                 </div>
+
+                <div class="wallet-divider">
+                    <span>or connect wallet</span>
+                </div>
+
+                <div class="button-row wallet-row">
+                    <button
+                        title="Xaman Wallet"
+                        aria-label="Sign in with Xaman"
+                        type="button"
+                        id="wallet-xaman"
+                        class="stroke slice-button wallet-button"
+                    >
+                        XAMAN
+                    </button>
+                    <button
+                        title="GemWallet"
+                        aria-label="Sign in with GemWallet"
+                        type="button"
+                        id="wallet-gemwallet"
+                        class="stroke slice-button wallet-button"
+                    >
+                        GEM
+                    </button>
+                </div>
+
+                <div class="button-row wallet-row">
+                    <button
+                        title="Crossmark"
+                        aria-label="Sign in with Crossmark"
+                        type="button"
+                        id="wallet-crossmark"
+                        class="stroke slice-button wallet-button"
+                    >
+                        CROSSMARK
+                    </button>
+                    <button
+                        title="Joey / XRP Wallet"
+                        aria-label="Sign in with Joey or XRP Wallet"
+                        type="button"
+                        id="wallet-joey"
+                        class="stroke slice-button wallet-button"
+                    >
+                        JOEY / XRP
+                    </button>
+                </div>
+
+                <div id="joey-address-input" class="joey-input-row" style="display: none;">
+                    <input
+                        type="text"
+                        id="joey-address"
+                        class="stroke slice-input"
+                        placeholder="Enter your XRPL address (r...)"
+                        aria-label="XRPL Wallet Address"
+                        maxlength="50"
+                        autocomplete="off"
+                    />
+                    <button
+                        title="Connect"
+                        aria-label="Connect Joey wallet"
+                        type="button"
+                        id="joey-connect"
+                        class="stroke slice-button wallet-button"
+                    >
+                        CONNECT
+                    </button>
+                </div>
             </form>
         </article>
 

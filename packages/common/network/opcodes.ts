@@ -1,7 +1,8 @@
 export enum Login {
     Login,
     Register,
-    Guest
+    Guest,
+    Wallet
 }
 
 export enum List {

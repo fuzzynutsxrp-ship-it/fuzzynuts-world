@@ -1,6 +1,7 @@
 import install from './lib/pwa';
 import Storage from './utils/storage';
 import Util from './utils/util';
+import Wallet from './wallet';
 import { isMobile } from './utils/detect';
 import { onSecondaryPress } from './utils/press';
 
@@ -65,6 +66,11 @@ export default class App {
     private loggingIn = false; // Used to prevent interactions when trying to log in.
     private menuHidden = false; // Used to reroute key input to the callback.
 
+    // Wallet auth state
+    private walletLoginActive = false;
+    private walletAddress = '';
+    private walletType = '';
+
     public statusMessage = '';
 
     private selectedServer?: SerializedServer;
@@ -120,6 +126,13 @@ export default class App {
         this.worldSelectButton.addEventListener('click', () => this.openScroll('world-select'));
 
         this.gameVersion.textContent = `${this.config.version}${this.config.minor}`;
+
+        // Wallet login button handlers
+        document.querySelector('#wallet-xaman')?.addEventListener('click', () => this.handleWalletLogin('xaman'));
+        document.querySelector('#wallet-gemwallet')?.addEventListener('click', () => this.handleWalletLogin('gemwallet'));
+        document.querySelector('#wallet-crossmark')?.addEventListener('click', () => this.handleWalletLogin('crossmark'));
+        document.querySelector('#wallet-joey')?.addEventListener('click', () => this.toggleJoeyInput());
+        document.querySelector('#joey-connect')?.addEventListener('click', () => this.handleJoeyConnect());
 
         // Document callbacks such as clicks and keystrokes.
         document.addEventListener('keydown', (e: KeyboardEvent) => e.key !== 'Enter');
@@ -513,6 +526,125 @@ export default class App {
 
     public isGuest(): boolean {
         return this.guest.checked;
+    }
+
+    /**
+     * @returns Whether or not this is a wallet-based login.
+     */
+
+    public isWalletLogin(): boolean {
+        return this.walletLoginActive;
+    }
+
+    /**
+     * @returns The connected wallet's XRPL address.
+     */
+
+    public getWalletAddress(): string {
+        return this.walletAddress;
+    }
+
+    /**
+     * @returns The wallet type used for connection.
+     */
+
+    public getWalletType(): string {
+        return this.walletType;
+    }
+
+    /**
+     * Handles wallet login for Xaman, GemWallet, and Crossmark.
+     * Each wallet has its own SDK flow but returns a unified address.
+     * @param type The wallet type to connect.
+     */
+
+    private async handleWalletLogin(type: 'xaman' | 'gemwallet' | 'crossmark'): Promise<void> {
+        if (this.loggingIn) return;
+
+        this.clearErrors();
+        this.sendStatus(`Connecting to ${type}...`);
+
+        let result = null;
+
+        switch (type) {
+            case 'xaman':
+                result = await Wallet.connectXaman();
+                break;
+            case 'gemwallet':
+                result = await Wallet.connectGemWallet();
+                break;
+            case 'crossmark':
+                result = await Wallet.connectCrossmark();
+                break;
+        }
+
+        if (!result) {
+            this.sendError(`Failed to connect ${type}. Make sure the wallet is installed and try again.`);
+            return;
+        }
+
+        // Set wallet state and trigger login flow.
+        this.walletLoginActive = true;
+        this.walletAddress = result.address;
+        this.walletType = result.walletType;
+
+        Wallet.saveWalletState(result);
+
+        this.toggleLogin(true);
+        this.loginCallback?.(this.selectedServer);
+        install();
+    }
+
+    /**
+     * Toggles the Joey address input field visibility.
+     */
+
+    private toggleJoeyInput(): void {
+        let joeyRow = document.querySelector<HTMLElement>('#joey-address-input');
+        if (joeyRow) joeyRow.style.display = joeyRow.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    /**
+     * Handles Joey/XRP wallet connection via manual address input.
+     * Validates address format and verifies on-ledger existence.
+     */
+
+    private async handleJoeyConnect(): Promise<void> {
+        if (this.loggingIn) return;
+
+        let addressInput = document.querySelector<HTMLInputElement>('#joey-address');
+        let address = addressInput?.value?.trim() || '';
+
+        if (!address) {
+            this.sendError('Please enter your XRPL wallet address.', addressInput!);
+            return;
+        }
+
+        if (!Wallet.isValidAddress(address)) {
+            this.sendError('Invalid XRPL address format. Must start with r.', addressInput!);
+            return;
+        }
+
+        this.clearErrors();
+        this.sendStatus('Verifying wallet address...');
+
+        let result = await Wallet.connectJoey(address);
+
+        if (!result) {
+            this.sendError('Wallet address not found on XRPL. Please check and try again.', addressInput!);
+            return;
+        }
+
+        // Set wallet state and trigger login flow.
+        this.walletLoginActive = true;
+        this.walletAddress = result.address;
+        this.walletType = result.walletType;
+
+        Wallet.saveWalletState(result);
+
+        this.toggleLogin(true);
+        this.loginCallback?.(this.selectedServer);
+        install();
     }
 
     /**

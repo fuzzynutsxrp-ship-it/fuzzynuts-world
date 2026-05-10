@@ -23,6 +23,8 @@ export interface PlayerInfo {
     username: string;
     password: string;
     email: string;
+    walletAddress?: string;
+    authMethod?: 'password' | 'wallet' | 'guest';
     x: number;
     y: number;
     userAgent: string;
@@ -302,7 +304,9 @@ export default class Creator {
             lastGlobalChat: player.lastGlobalChat,
             guild: player.guild,
             pet: player.pet ? player.pet.key : '',
-            resetToken: undefined // Save token as undefined to prevent it from being saved.
+            resetToken: undefined, // Save token as undefined to prevent it from being saved.
+            walletAddress: player.walletAddress || '',
+            authMethod: player.authMethod || 'password'
         };
     }
 }

@@ -212,6 +212,14 @@ export default class Connection {
         this.game.player.instance = data.instance!;
         this.game.player.serverId = data.serverId!;
 
+        // Wallet login — send address-based auth packet.
+        if (this.app.isWalletLogin())
+            return this.socket.send(Packets.Login, {
+                opcode: Opcodes.Login.Wallet,
+                walletAddress: this.app.getWalletAddress(),
+                walletType: this.app.getWalletType()
+            });
+
         // Guest login doesn't require any credentials, send the packet right away.
         if (this.app.isGuest())
             return this.socket.send(Packets.Login, { opcode: Opcodes.Login.Guest });

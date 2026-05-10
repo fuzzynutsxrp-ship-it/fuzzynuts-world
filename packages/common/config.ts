@@ -78,6 +78,9 @@ export interface Config {
 
     acceptLicense: boolean;
 
+    enableWalletAuth: boolean;
+    walletAuthMock: boolean;
+
     debugging: boolean;
     debugLevel: 'all';
     fsDebugging: boolean;

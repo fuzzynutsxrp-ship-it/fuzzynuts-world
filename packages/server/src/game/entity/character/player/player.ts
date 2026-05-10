@@ -120,6 +120,8 @@ export default class Player extends Character {
     public username = '';
     public password = '';
     public email = '';
+    public walletAddress = '';
+    public authMethod: 'password' | 'wallet' | 'guest' = 'password';
     public userAgent = '';
     public guild = '';
 

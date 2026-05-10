@@ -236,10 +236,36 @@ export default class Incoming {
                 // Authenticated so that we send the logout packet to the hub.
                 this.player.authenticated = true;
                 this.player.isGuest = true; // Makes sure player doesn't get saved to database.
+                this.player.authMethod = 'guest';
                 this.player.username = `guest${Utils.counter++}`; // Generate a random guest username.
 
                 this.player.load(Creator.serialize(this.player));
                 return;
+            }
+
+            case Opcodes.Login.Wallet: {
+                // Check if wallet auth is enabled via feature flag.
+                if (!config.enableWalletAuth) return this.connection.reject('disabledregister');
+
+                let { walletAddress } = data;
+
+                // Validate XRPL address format (r + 24-34 base58 chars).
+                if (!walletAddress || !/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(walletAddress))
+                    return this.connection.reject('invalidlogin');
+
+                // Set wallet info on the player object.
+                this.player.walletAddress = walletAddress;
+                this.player.authMethod = 'wallet';
+
+                // Proceed directly if skipDatabase is set.
+                if (config.skipDatabase) {
+                    this.player.username = `nut_${walletAddress.slice(-8).toLowerCase()}`;
+                    this.player.load(Creator.serialize(this.player));
+                    return;
+                }
+
+                // Delegate to database wallet login handler.
+                return this.database.walletLogin(this.player);
             }
         }
     }

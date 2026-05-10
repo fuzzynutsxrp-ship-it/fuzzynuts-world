@@ -164,6 +164,52 @@ export default class MongoDB {
     }
 
     /**
+     * Handles wallet-based authentication. Looks up player by XRPL wallet address.
+     * If found, loads existing player data (skips password check).
+     * If not found, auto-creates a new account keyed to the wallet address.
+     * @param player The player object with walletAddress already set.
+     */
+
+    public walletLogin(player: Player): void {
+        if (!this.hasDatabase()) return;
+
+        let cursor = this.database
+            .collection<PlayerInfo>('player_info')
+            .find({ walletAddress: player.walletAddress });
+
+        cursor.toArray().then((playerInfo) => {
+            if (playerInfo.length > 0) {
+                // Existing wallet user — load directly, no password check needed.
+                let [info] = playerInfo;
+
+                player.username = info.username;
+                player.authenticated = true;
+                player.authMethod = 'wallet';
+
+                // Reject if already online.
+                if (player.world.isOnline(player.username))
+                    return player.connection.reject('loggedin');
+
+                player.load(info);
+            } else {
+                // New wallet user — auto-register with wallet-derived username.
+                let truncated = player.walletAddress.slice(-8).toLowerCase(),
+                    username = `nut_${truncated}`;
+
+                player.username = username;
+                player.authenticated = true;
+                player.authMethod = 'wallet';
+                player.password = ''; // No password for wallet auth.
+                player.statistics.creationTime = Date.now();
+
+                log.debug(`New wallet user created: ${username} (${player.walletAddress})`);
+
+                player.load(Creator.serialize(player));
+            }
+        });
+    }
+
+    /**
      * Checks whether or not the username exists in the database.
      * @param username The username to check for.
      * @param callback Contains the result of the check.
