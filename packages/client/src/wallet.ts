@@ -1,7 +1,11 @@
 /**
  * Multi-wallet integration for Fuzzynuts World MMORPG.
  * Ported from the arcade's FuzzyWallet (website/arcade/wallet.js).
- * Supports: Xaman (QR/mobile), GemWallet (extension), Crossmark (extension), Joey (manual address).
+ * Supports: Xaman (QR/mobile), GemWallet (extension), Crossmark (extension).
+ *
+ * Joey was removed — raw address input has no proof of ownership,
+ * allowing anyone to impersonate any wallet. Only wallets with
+ * cryptographic signing flows are supported for game auth.
  *
  * This module provides a unified connect() interface that returns a wallet address
  * regardless of which wallet the player uses. The game's login system uses this
@@ -134,48 +138,6 @@ async function connectCrossmark(): Promise<WalletResult | null> {
     }
 }
 
-/**
- * Joey wallet uses manual address input (mobile-only with WalletConnect
- * which requires npm bundlers — not compatible with our static build).
- * We validate the address exists on-ledger before accepting.
- */
-async function connectJoey(address: string): Promise<WalletResult | null> {
-    try {
-        if (!address || !isValidAddress(address)) {
-            console.warn('[Wallet] Joey: invalid address format');
-            return null;
-        }
-
-        // Verify the account exists on XRPL
-        try {
-            let response = await fetch('https://xrplcluster.com', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    method: 'account_info',
-                    params: [{ account: address }]
-                })
-            });
-            let data = await response.json();
-            if (data.result?.error === 'actNotFound') {
-                console.warn('[Wallet] Joey: account not found on XRPL');
-                return null;
-            }
-        } catch {
-            // Network error — proceed anyway
-            console.warn('[Wallet] Joey: could not verify account, proceeding');
-        }
-
-        return {
-            address,
-            walletType: 'joey',
-            displayName: truncateAddress(address)
-        };
-    } catch (error) {
-        console.warn('[Wallet] Joey connection failed:', error);
-        return null;
-    }
-}
 
 // ── Persistence ──
 
