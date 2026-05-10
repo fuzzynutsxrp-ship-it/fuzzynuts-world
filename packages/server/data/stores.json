@@ -43,6 +43,21 @@
             {
                 "key": "ring1",
                 "count": 1
+            },
+            {
+                "key": "bronzeaxe",
+                "count": 10,
+                "price": 750
+            },
+            {
+                "key": "bronzepickaxe",
+                "count": 10,
+                "price": 750
+            },
+            {
+                "key": "fishingpole",
+                "count": 5,
+                "price": 300
             }
         ],
         "refresh": 30000,
