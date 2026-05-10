@@ -11,7 +11,7 @@
 // Xaman API key for Fuzzynuts — registered at apps.xaman.dev
 const XAMAN_API_KEY = 'f4f734d6-c1d6-484a-84c1-70322602a7f5';
 
-export type WalletType = 'xaman' | 'gemwallet' | 'crossmark' | 'joey';
+export type WalletType = 'xaman' | 'gemwallet' | 'crossmark';
 
 export interface WalletResult {
     address: string;
@@ -217,7 +217,6 @@ export default {
     connectXaman,
     connectGemWallet,
     connectCrossmark,
-    connectJoey,
     saveWalletState,
     loadWalletState,
     clearWalletState,

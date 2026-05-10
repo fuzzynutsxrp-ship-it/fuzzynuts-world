@@ -222,19 +222,3 @@
     margin-top: 0.1em !important;
     justify-content: center;
 }
-
-.joey-input-row {
-    display: flex;
-    gap: 0.3em;
-    margin-top: 0.2em;
-
-    input {
-        flex: 1;
-        font-size: 0.7em !important;
-    }
-
-    .wallet-button {
-        width: 5.5em !important;
-        font-size: 0.65em !important;
-    }
-}

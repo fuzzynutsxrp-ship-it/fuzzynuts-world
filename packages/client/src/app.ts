@@ -131,8 +131,6 @@ export default class App {
         document.querySelector('#wallet-xaman')?.addEventListener('click', () => this.handleWalletLogin('xaman'));
         document.querySelector('#wallet-gemwallet')?.addEventListener('click', () => this.handleWalletLogin('gemwallet'));
         document.querySelector('#wallet-crossmark')?.addEventListener('click', () => this.handleWalletLogin('crossmark'));
-        document.querySelector('#wallet-joey')?.addEventListener('click', () => this.toggleJoeyInput());
-        document.querySelector('#joey-connect')?.addEventListener('click', () => this.handleJoeyConnect());
 
         // Document callbacks such as clicks and keystrokes.
         document.addEventListener('keydown', (e: KeyboardEvent) => e.key !== 'Enter');
@@ -595,57 +593,7 @@ export default class App {
         install();
     }
 
-    /**
-     * Toggles the Joey address input field visibility.
-     */
 
-    private toggleJoeyInput(): void {
-        let joeyRow = document.querySelector<HTMLElement>('#joey-address-input');
-        if (joeyRow) joeyRow.style.display = joeyRow.style.display === 'none' ? 'flex' : 'none';
-    }
-
-    /**
-     * Handles Joey/XRP wallet connection via manual address input.
-     * Validates address format and verifies on-ledger existence.
-     */
-
-    private async handleJoeyConnect(): Promise<void> {
-        if (this.loggingIn) return;
-
-        let addressInput = document.querySelector<HTMLInputElement>('#joey-address');
-        let address = addressInput?.value?.trim() || '';
-
-        if (!address) {
-            this.sendError('Please enter your XRPL wallet address.', addressInput!);
-            return;
-        }
-
-        if (!Wallet.isValidAddress(address)) {
-            this.sendError('Invalid XRPL address format. Must start with r.', addressInput!);
-            return;
-        }
-
-        this.clearErrors();
-        this.sendStatus('Verifying wallet address...');
-
-        let result = await Wallet.connectJoey(address);
-
-        if (!result) {
-            this.sendError('Wallet address not found on XRPL. Please check and try again.', addressInput!);
-            return;
-        }
-
-        // Set wallet state and trigger login flow.
-        this.walletLoginActive = true;
-        this.walletAddress = result.address;
-        this.walletType = result.walletType;
-
-        Wallet.saveWalletState(result);
-
-        this.toggleLogin(true);
-        this.loginCallback?.(this.selectedServer);
-        install();
-    }
 
     /**
      * Checks if the remember me checkbox is checked.
