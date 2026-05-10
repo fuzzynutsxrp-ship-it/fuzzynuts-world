@@ -40,6 +40,7 @@ const SCORE_CAPS: Record<string, number> = {
     mario: 99999,
     survivors: 999999,
     minigolf: 10500,
+    kaetram: 9999999,
     nutracer: 99999
 };
 
