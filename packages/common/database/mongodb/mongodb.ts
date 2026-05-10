@@ -40,11 +40,19 @@ export default class MongoDB {
         srv: boolean,
         authSource: string
     ) {
-        let srvInsert = srv ? 'mongodb+srv' : 'mongodb',
-            authInsert = username && password ? `${username}:${password}@` : '',
-            portInsert = port > 0 ? `:${port}` : '',
-            authSourceInsert = authSource ? `?authSource=${authSource}` : '';
-        this.connectionUrl = `${srvInsert}://${authInsert}${host}${portInsert}/${databaseName}${authSourceInsert}`;
+        // Prefer MONGO_URL from Railway if available
+        if (process.env.MONGO_URL) {
+            this.connectionUrl = process.env.MONGO_URL;
+            log.notice(`Using MONGO_URL from environment for MongoDB connection.`);
+        } else {
+            let srvInsert = srv ? 'mongodb+srv' : 'mongodb',
+                authInsert = username && password ? `${username}:${password}@` : '',
+                portInsert = port > 0 ? `:${port}` : '',
+                authSourceInsert = authSource ? `?authSource=${authSource}` : '';
+            this.connectionUrl = `${srvInsert}://${authInsert}${host}${portInsert}/${databaseName}${authSourceInsert}`;
+        }
+
+        log.info(`MongoDB connection target: ${this.connectionUrl.replace(/\/\/.*@/, '//***@')}`);
 
         // Attempt to connect to MongoDB.
         this.createConnection();
