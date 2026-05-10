@@ -1,5 +1,5 @@
 export default {
-    NAME: 'Kaetram',
+    NAME: 'Fuzzynuts World',
     DESCRIPTION:
-        "Kaetram is an open-source game-engine created to aid those interested in entering the game development realm. The original idea is based on Little Workshop's demo game - BrowserQuest. The assets have remained the same, but the code itself has been completely wiped and redone from the ground up."
+        "Fuzzynuts World is a private 2D MMORPG adventure on the XRPL-powered Fuzzynuts Arcade. Explore a persistent fantasy world, complete quests, battle monsters, and compete with other players."
 } as const;

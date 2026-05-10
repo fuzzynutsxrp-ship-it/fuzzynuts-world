@@ -235,7 +235,7 @@ export default class Messages {
             }
 
             case 'maintenance': {
-                this.app.sendError('Kaetram is currently under maintenance.');
+                this.app.sendError('Fuzzynuts World is currently under maintenance.');
                 break;
             }
 

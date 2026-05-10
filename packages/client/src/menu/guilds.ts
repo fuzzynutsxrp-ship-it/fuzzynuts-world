@@ -814,7 +814,7 @@ export default class Guilds extends Menu {
 
             serverElement.className = `server ${isPlayer ? 'text-green' : 'text-red'}`;
 
-            serverElement.innerHTML = isPlayer ? `Kaetram ${this.game.player.serverId}` : 'Offline';
+            serverElement.innerHTML = isPlayer ? `Fuzzynuts ${this.game.player.serverId}` : 'Offline';
 
             element.append(serverElement);
 

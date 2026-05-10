@@ -112,7 +112,7 @@ if (import.meta.env.PROD)
 // https://astro.build/config
 export default defineConfig({
     srcDir: './',
-    site: 'https://kaetram.com/',
+    site: 'https://efficient-tenderness-production.up.railway.app/',
     trailingSlash: 'always',
     integrations,
     server: { host: true, port: 9000 },
