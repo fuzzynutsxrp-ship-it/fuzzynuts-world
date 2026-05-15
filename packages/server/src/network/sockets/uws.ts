@@ -1,6 +1,7 @@
 import WebSocket from '../websocket';
 import Connection from '../connection';
 import ScoresAPI from '../../api/scores';
+import RewardsAPI from '../../api/rewards';
 
 import log from '@kaetram/common/util/log';
 import config from '@kaetram/common/config';
@@ -16,6 +17,7 @@ import type MongoDB from '@kaetram/common/database/mongodb/mongodb';
 
 export default class UWS extends WebSocket {
     private scoresAPI?: ScoresAPI;
+    private rewardsAPI?: RewardsAPI;
 
     public constructor(socketHandler: SocketHandler, database?: MongoDB) {
         super(config.host, config.port, socketHandler);
@@ -25,6 +27,9 @@ export default class UWS extends WebSocket {
         if (db) {
             this.scoresAPI = new ScoresAPI(db);
             log.info('[UWS] Scores API routes registered at /api/scores');
+
+            this.rewardsAPI = new RewardsAPI(db);
+            log.info('[UWS] Prize Rewards API routes registered at /api/rewards/eligibility, /api/rewards/claim');
         }
 
         const app = App({});
@@ -73,6 +78,37 @@ export default class UWS extends WebSocket {
             if (this.scoresAPI) this.scoresAPI.handleRewardsOptions(res);
             else {
                 res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end();
+            }
+        });
+
+        // ── Prize Rewards API routes (eligibility + claiming) ──
+        app.get('/api/rewards/eligibility', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleEligibility(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.post('/api/rewards/claim', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleClaim(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.options('/api/rewards/*', (res: HttpResponse) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleOptions(res);
+            else {
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.writeHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+                res.writeHeader('Access-Control-Allow-Headers', 'Content-Type');
                 res.end();
             }
         });
