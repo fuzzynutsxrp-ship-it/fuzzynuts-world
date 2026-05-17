@@ -26,6 +26,7 @@ interface Settings {
     debugMode: boolean;
     showNames: boolean;
     showLevels: boolean;
+    showCoords: boolean;
     disableCaching: boolean;
     webgl: boolean;
     fpsThrottle: number;
@@ -97,6 +98,7 @@ export default class Storage {
                 debugMode: false,
                 showNames: true,
                 showLevels: true,
+                showCoords: false,
                 disableCaching: false,
                 webgl: false,
                 fpsThrottle: isIos() ? 1 : 0 // default to 50fps throttle on iOS.
@@ -317,6 +319,17 @@ export default class Storage {
 
     public setShowLevels(showLevels: boolean): void {
         this.data.settings.showLevels = showLevels;
+
+        this.save();
+    }
+
+    /**
+     * Updates whether or not to display the coordinate HUD.
+     * @param showCoords New value we are updating in the local storage.
+     */
+
+    public setShowCoords(showCoords: boolean): void {
+        this.data.settings.showCoords = showCoords;
 
         this.save();
     }

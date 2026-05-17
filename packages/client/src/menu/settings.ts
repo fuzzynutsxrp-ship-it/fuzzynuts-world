@@ -31,6 +31,9 @@ export default class Settings extends Menu {
     private showLevelsCheckbox: HTMLInputElement = document.querySelector(
         '#show-levels-checkbox > input'
     )!;
+    private showCoordsCheckbox: HTMLInputElement = document.querySelector(
+        '#show-coords-checkbox > input'
+    )!;
     private disableCachingCheckbox: HTMLInputElement = document.querySelector(
         '#disable-region-caching-checkbox > input'
     )!;
@@ -55,6 +58,7 @@ export default class Settings extends Menu {
         this.debugCheckbox.addEventListener('change', this.handleDebug.bind(this));
         this.showNamesCheckbox.addEventListener('change', this.handleName.bind(this));
         this.showLevelsCheckbox.addEventListener('change', this.handleLevel.bind(this));
+        this.showCoordsCheckbox.addEventListener('change', this.handleCoords.bind(this));
         this.disableCachingCheckbox.addEventListener('change', this.handleCaching.bind(this));
         this.webGlCheckbox.addEventListener('change', this.handleWebGl.bind(this));
         this.fpsThrottleDropdown.addEventListener('change', this.handleFpsThrottle.bind(this));
@@ -82,6 +86,7 @@ export default class Settings extends Menu {
         this.debugCheckbox.checked = settings.debugMode;
         this.showNamesCheckbox.checked = settings.showNames;
         this.showLevelsCheckbox.checked = settings.showLevels;
+        this.showCoordsCheckbox.checked = settings.showCoords ?? false;
         this.disableCachingCheckbox.checked = settings.disableCaching;
         this.webGlCheckbox.checked = settings.webgl;
         this.fpsThrottleDropdown.selectedIndex = settings.fpsThrottle;
@@ -107,6 +112,7 @@ export default class Settings extends Menu {
         // Update the renderer for names and levels
         this.handleName();
         this.handleLevel();
+        this.handleCoords();
 
         this.handleInfo();
         this.handleFpsThrottle();
@@ -203,6 +209,15 @@ export default class Settings extends Menu {
     private handleLevel(): void {
         this.game.storage.setShowLevels(this.showLevelsCheckbox.checked);
         this.game.renderer.drawLevels = this.showLevelsCheckbox.checked;
+    }
+
+    /**
+     * Handler for when the coordinates checkbox is toggled.
+     */
+
+    private handleCoords(): void {
+        this.game.storage.setShowCoords(this.showCoordsCheckbox.checked);
+        this.game.renderer.showCoords = this.showCoordsCheckbox.checked;
     }
 
     /**

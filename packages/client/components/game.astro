@@ -123,6 +123,12 @@
             <button id="zoom-out" title="Zoom out"></button>
         </div>
 
+        <div id="coord-hud" hidden>
+            <span id="coord-hud-x">X: 0</span>
+            <span id="coord-hud-sep">•</span>
+            <span id="coord-hud-y">Y: 0</span>
+        </div>
+
         <div id="ability-shortcut" hidden>
             <div id="ability-quickslot1" class="ability-quickslot"></div>
             <div id="ability-quickslot2" class="ability-quickslot"></div>
@@ -330,6 +336,13 @@
                             <span id="show-levels-checkbox-text">Show Levels</span>
 
                             <input type="checkbox" aria-labelledby="show-levels-checkbox-text" />
+                            <span class="checkmark"></span>
+                        </label>
+
+                        <label id="show-coords-checkbox" class="check">
+                            <span id="show-coords-checkbox-text">Show Coordinates</span>
+
+                            <input type="checkbox" aria-labelledby="show-coords-checkbox-text" />
                             <span class="checkmark"></span>
                         </label>
 

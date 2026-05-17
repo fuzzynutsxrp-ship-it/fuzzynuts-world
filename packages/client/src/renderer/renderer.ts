@@ -138,6 +138,12 @@ export default class Renderer {
     public forceRendering = false;
     public drawNames = true;
     public drawLevels = true;
+    public showCoords = false;
+
+    // Coordinate HUD DOM elements
+    private coordHud: HTMLElement = document.querySelector('#coord-hud')!;
+    private coordHudX: HTMLElement = document.querySelector('#coord-hud-x')!;
+    private coordHudY: HTMLElement = document.querySelector('#coord-hud-y')!;
 
     // Default values
     public fontSize = 12;
@@ -275,6 +281,39 @@ export default class Renderer {
         this.drawMinigameGUI();
 
         this.restore();
+
+        this.updateCoordinateHUD();
+    }
+
+    /**
+     * Updates the coordinate HUD overlay with the player's current
+     * grid position. Uses DOM elements instead of canvas text for
+     * crisp rendering at any zoom level.
+     */
+
+    private lastCoordX = -1;
+    private lastCoordY = -1;
+
+    private updateCoordinateHUD(): void {
+        if (!this.showCoords) {
+            if (!this.coordHud.hidden) this.coordHud.hidden = true;
+            return;
+        }
+
+        if (this.coordHud.hidden) this.coordHud.hidden = false;
+
+        let { gridX, gridY } = this.game.player;
+
+        // Only update DOM when position actually changes.
+        if (gridX !== this.lastCoordX) {
+            this.coordHudX.textContent = `X: ${gridX}`;
+            this.lastCoordX = gridX;
+        }
+
+        if (gridY !== this.lastCoordY) {
+            this.coordHudY.textContent = `Y: ${gridY}`;
+            this.lastCoordY = gridY;
+        }
     }
 
     // -------------- Drawing Functions --------------
