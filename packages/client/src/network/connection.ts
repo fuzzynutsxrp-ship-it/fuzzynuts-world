@@ -217,7 +217,8 @@ export default class Connection {
             return this.socket.send(Packets.Login, {
                 opcode: Opcodes.Login.Wallet,
                 walletAddress: this.app.getWalletAddress(),
-                walletType: this.app.getWalletType()
+                walletType: this.app.getWalletType(),
+                username: this.app.getWalletUsername() || undefined
             });
 
         // Guest login doesn't require any credentials, send the packet right away.

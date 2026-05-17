@@ -104,6 +104,52 @@ let currentLanguage = getLanguage(),
             </form>
         </article>
 
+        <!-- Wallet username picker — shown after successful wallet connection -->
+        <article id="wallet-username">
+            <h1 class="title-decoration">Choose a Name</h1>
+
+            <form onsubmit={'return false'}>
+                <div id="wallet-address-display" class="wallet-address-badge">
+                    <span class="wallet-label">Wallet Connected</span>
+                    <span id="wallet-address-text" class="wallet-addr"></span>
+                </div>
+
+                <input
+                    type="text"
+                    id="wallet-username-input"
+                    class="stroke slice-input"
+                    name="wallet-username"
+                    placeholder="Enter display name"
+                    aria-label="Display name"
+                    maxlength="32"
+                    autocomplete="off"
+                />
+
+                <div class="validation-summary"></div>
+
+                <div class="button-row">
+                    <button
+                        title="Skip — use default name"
+                        aria-label="Skip"
+                        type="button"
+                        id="wallet-skip-name"
+                        class="stroke slice-button"
+                    >
+                        SKIP
+                    </button>
+                    <button
+                        title="Play"
+                        aria-label="Play"
+                        type="submit"
+                        id="wallet-play"
+                        class="stroke slice-button"
+                    >
+                        PLAY
+                    </button>
+                </div>
+            </form>
+        </article>
+
         <article id="reset-password">
             <h1>
                 <span class="left-ornament"></span>

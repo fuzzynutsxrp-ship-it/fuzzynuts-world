@@ -247,11 +247,19 @@ export default class Incoming {
                 // Check if wallet auth is enabled via feature flag.
                 if (!config.enableWalletAuth) return this.connection.reject('disabledregister');
 
-                let { walletAddress } = data;
+                let { walletAddress, username: walletUsername } = data;
 
                 // Validate XRPL address format (r + 24-34 base58 chars).
                 if (!walletAddress || !/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(walletAddress))
                     return this.connection.reject('invalidlogin');
+
+                // Sanitize the chosen username (if any).
+                if (walletUsername) {
+                    walletUsername = Filter.clean(walletUsername.toLowerCase().slice(0, 32).trim());
+                    // Reject profane or empty usernames.
+                    if (!walletUsername || Filter.isProfane(walletUsername))
+                        walletUsername = undefined;
+                }
 
                 // Set wallet info on the player object.
                 this.player.walletAddress = walletAddress;
@@ -259,13 +267,13 @@ export default class Incoming {
 
                 // Proceed directly if skipDatabase is set.
                 if (config.skipDatabase) {
-                    this.player.username = `nut_${walletAddress.slice(-8).toLowerCase()}`;
+                    this.player.username = walletUsername || `nut_${walletAddress.slice(-8).toLowerCase()}`;
                     this.player.load(Creator.serialize(this.player));
                     return;
                 }
 
                 // Delegate to database wallet login handler.
-                return this.database.walletLogin(this.player);
+                return this.database.walletLogin(this.player, walletUsername);
             }
         }
     }

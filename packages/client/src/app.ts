@@ -52,6 +52,13 @@ export default class App {
     private rememberMe: HTMLInputElement = document.querySelector('#remember-me input')!;
     private guest: HTMLInputElement = document.querySelector('#guest input')!;
 
+    // Wallet username picker elements
+    private walletUsernameInput: HTMLInputElement = document.querySelector('#wallet-username-input')!;
+    private walletAddressText: HTMLElement = document.querySelector('#wallet-address-text')!;
+    private walletPlayButton: HTMLButtonElement = document.querySelector('#wallet-play')!;
+    private walletSkipButton: HTMLButtonElement = document.querySelector('#wallet-skip-name')!;
+    private walletUsernameForm: HTMLElement = document.querySelector('#wallet-username form')!;
+
     private about: HTMLElement = document.querySelector('#toggle-about')!;
     private credits: HTMLElement = document.querySelector('#toggle-credits')!;
     private resetPassword: HTMLElement = document.querySelector('#toggle-reset-password')!;
@@ -70,6 +77,7 @@ export default class App {
     private walletLoginActive = false;
     private walletAddress = '';
     private walletType = '';
+    private walletChosenUsername = '';
 
     public statusMessage = '';
 
@@ -131,6 +139,11 @@ export default class App {
         document.querySelector('#wallet-xaman')?.addEventListener('click', () => this.handleWalletLogin('xaman'));
         document.querySelector('#wallet-gemwallet')?.addEventListener('click', () => this.handleWalletLogin('gemwallet'));
         document.querySelector('#wallet-crossmark')?.addEventListener('click', () => this.handleWalletLogin('crossmark'));
+
+        // Wallet username picker handlers
+        this.walletPlayButton?.addEventListener('click', () => this.submitWalletUsername());
+        this.walletSkipButton?.addEventListener('click', () => this.submitWalletUsername(true));
+        this.walletUsernameForm?.addEventListener('submit', (e) => { e.preventDefault(); this.submitWalletUsername(); });
 
         // Document callbacks such as clicks and keystrokes.
         document.addEventListener('keydown', (e: KeyboardEvent) => e.key !== 'Enter');
@@ -551,6 +564,14 @@ export default class App {
     }
 
     /**
+     * @returns The username chosen by the wallet user (empty = use default).
+     */
+
+    public getWalletUsername(): string {
+        return this.walletChosenUsername;
+    }
+
+    /**
      * Handles wallet login for Xaman, GemWallet, and Crossmark.
      * Each wallet has its own SDK flow but returns a unified address.
      * @param type The wallet type to connect.
@@ -581,12 +602,45 @@ export default class App {
             return;
         }
 
-        // Set wallet state and trigger login flow.
+        // Set wallet state.
         this.walletLoginActive = true;
         this.walletAddress = result.address;
         this.walletType = result.walletType;
 
         Wallet.saveWalletState(result);
+
+        // Show the username picker screen instead of auto-login.
+        this.sendStatus();
+        if (this.walletAddressText)
+            this.walletAddressText.textContent = `${result.address.slice(0, 6)}...${result.address.slice(-6)}`;
+        if (this.walletUsernameInput) this.walletUsernameInput.value = '';
+        this.openScroll('wallet-username');
+        this.walletUsernameInput?.focus();
+    }
+
+    /**
+     * Submits the wallet username and proceeds to login.
+     * @param skip If true, skips username input and uses auto-generated name.
+     */
+
+    private submitWalletUsername(skip = false): void {
+        if (this.loggingIn) return;
+
+        let username = skip ? '' : (this.walletUsernameInput?.value?.trim() || '');
+
+        // Basic validation: if they entered something, enforce min length.
+        if (username && username.length < 3) {
+            this.sendError('Username must be at least 3 characters.');
+            return;
+        }
+
+        if (username && username.length > 32) {
+            this.sendError('Username must be less than 32 characters.');
+            return;
+        }
+
+        // Store the chosen username.
+        this.walletChosenUsername = username;
 
         this.toggleLogin(true);
         this.loginCallback?.(this.selectedServer);

@@ -170,14 +170,14 @@ export default class MongoDB {
      * @param player The player object with walletAddress already set.
      */
 
-    public walletLogin(player: Player): void {
+    public walletLogin(player: Player, chosenUsername?: string): void {
         if (!this.hasDatabase()) return;
 
         let cursor = this.database
             .collection<PlayerInfo>('player_info')
             .find({ walletAddress: player.walletAddress });
 
-        cursor.toArray().then((playerInfo) => {
+        cursor.toArray().then(async (playerInfo) => {
             if (playerInfo.length > 0) {
                 // Existing wallet user — load directly, no password check needed.
                 let [info] = playerInfo;
@@ -192,9 +192,21 @@ export default class MongoDB {
 
                 player.load(info);
             } else {
-                // New wallet user — auto-register with wallet-derived username.
+                // New wallet user — use chosen username or fallback to auto-generated.
                 let truncated = player.walletAddress.slice(-8).toLowerCase(),
                     username = `nut_${truncated}`;
+
+                // If the player chose a custom username, check for collisions.
+                if (chosenUsername) {
+                    let existing = await this.database
+                        .collection<PlayerInfo>('player_info')
+                        .findOne({ username: chosenUsername });
+
+                    if (!existing) {
+                        username = chosenUsername;
+                    }
+                    // If collision, fall back to auto-generated name silently.
+                }
 
                 player.username = username;
                 player.authenticated = true;
