@@ -8,37 +8,6 @@
         "projectileName": "fireball2",
         "achievement": "ancientwizard"
     },
-
-    "320-455": {
-        "name": "Hermit Crab Warrior",
-        "drops": [
-            {
-                "key": "flask",
-                "chance": 2000
-            },
-            {
-                "key": "gold",
-                "chance": 7500
-            },
-            {
-                "key": "ironspear",
-                "chance": 750
-            },
-            {
-                "key": "platearmor",
-                "chance": 1000
-            }
-        ],
-        "dropTables": ["ordinary", "unusual", "warriorcrab"],
-        "roaming": true,
-        "miniboss": true,
-        "hitPoints": 300,
-        "level": 30,
-        "aggroRange": 3,
-        "aggressive": true,
-        "achievement": "warriorcrab"
-    },
-
     "293-729": {
         "name": "Water Guardian",
         "drops": [
@@ -52,7 +21,6 @@
         "hitPoints": 350,
         "achievement": "waterguardian"
     },
-
     "387-740": {
         "name": "Ogre Guardian",
         "miniboss": true,
@@ -63,7 +31,6 @@
         "respawnDelay": 180000,
         "achievement": "ogreguardian"
     },
-
     "271-731": {
         "name": "Mimic",
         "achievement": "notwhatitseems",
@@ -94,7 +61,6 @@
             }
         ]
     },
-
     "507-828": {
         "name": "Mimic",
         "achievement": "treadcarefully",
@@ -125,7 +91,6 @@
             }
         ]
     },
-
     "324-252": {
         "name": "Mimic",
         "achievement": "notwhatitseems",
@@ -159,7 +124,6 @@
             }
         ]
     },
-
     "556-821": {
         "name": "Mimic",
         "achievement": "notwhatitseems",
@@ -185,7 +149,6 @@
             }
         ]
     },
-
     "951-707": {
         "name": "Mimic",
         "achievement": "notwhatitseems",
@@ -207,7 +170,6 @@
             }
         ]
     },
-
     "773-767": {
         "name": "Mimic",
         "achievement": "notwhatitseems",
@@ -229,7 +191,6 @@
             }
         ]
     },
-
     "802-651": {
         "name": "Mimic",
         "achievement": "notwhatitseems",
@@ -251,44 +212,37 @@
             }
         ]
     },
-
     "264-127": {
         "name": "Old Ogre",
         "miniboss": true
     },
-
     "355-247": {
         "name": "Ice Guardian",
         "miniboss": true,
         "defenseLevel": 15,
         "level": 35
     },
-
     "356-252": {
         "name": "Ice Guardian",
         "miniboss": true,
         "defenseLevel": 15,
         "level": 35
     },
-
     "398-135": {
         "name": "Vulture",
         "achievement": "vulture"
     },
-
     "334-144": {
         "name": "Iron Ogre",
         "miniboss": true,
         "level": 25,
         "achievement": "pathofdeath"
     },
-
     "149-402": {
         "name": "Baby Sea Dragon",
         "miniboss": true,
         "achievement": "babyseadragon"
     },
-
     "808-813": {
         "name": "Ice Knight",
         "miniboss": true,
@@ -304,20 +258,17 @@
             }
         ]
     },
-
     "880-772": {
         "name": "Golden Golem",
         "miniboss": true,
         "achievement": "goldengolem"
     },
-
     "865-753": {
         "name": "Big Baby Spooder",
         "miniboss": true,
         "achievement": "webdeveloper",
         "level": 45
     },
-
     "676-851": {
         "name": "Mermaid",
         "miniboss": true,
@@ -325,12 +276,44 @@
         "defenseLevel": 28,
         "level": 55
     },
-
     "1112-778": {
         "name": "Dark Wolf",
         "miniboss": true,
         "achievement": "roadtohell",
         "hitPoints": 1050,
         "attackRate": 800
+    },
+    "321-450": {
+        "name": "Hermit Crab Warrior",
+        "drops": [
+            {
+                "key": "flask",
+                "chance": 2000
+            },
+            {
+                "key": "gold",
+                "chance": 7500
+            },
+            {
+                "key": "ironspear",
+                "chance": 750
+            },
+            {
+                "key": "platearmor",
+                "chance": 1000
+            }
+        ],
+        "dropTables": [
+            "ordinary",
+            "unusual",
+            "warriorcrab"
+        ],
+        "roaming": true,
+        "miniboss": true,
+        "hitPoints": 300,
+        "level": 30,
+        "aggroRange": 3,
+        "aggressive": true,
+        "achievement": "warriorcrab"
     }
 }
