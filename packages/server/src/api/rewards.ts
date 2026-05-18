@@ -17,6 +17,14 @@ import log from '@kaetram/common/util/log';
 import type { Db, Collection } from 'mongodb';
 import type { HttpResponse, HttpRequest } from 'uws';
 
+// Dynamic import for xrpl — used in health check
+let xrplModule: any = null;
+try {
+    xrplModule = require('xrpl');
+} catch {
+    // Will be loaded lazily in claim handler
+}
+
 // ── Types ──
 
 interface ClaimRecord {
@@ -521,6 +529,106 @@ export default class RewardsAPI {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  GET /api/rewards/claim/status?wallet=rXXX&week=2026-W20
+    //  Used by the frontend to poll transaction status after claim
+    // ═══════════════════════════════════════════════════════════
+
+    public async handleClaimStatus(response: HttpResponse, request: HttpRequest): Promise<void> {
+        let aborted = false;
+        response.onAborted(() => { aborted = true; });
+
+        try {
+            const query = request.getQuery();
+            const params = new URLSearchParams(query);
+            const wallet = params.get('wallet');
+            const weekParam = params.get('week');
+
+            if (!wallet || !XRPL_ADDRESS_RE.test(wallet)) {
+                return this.respond(response, aborted, 400, { error: 'invalid_wallet' });
+            }
+
+            const weekKey = (weekParam && WEEK_KEY_RE.test(weekParam)) ? weekParam : getCurrentWeekKey();
+
+            // Look up the claim record
+            const claim = await this.prizesCol.findOne({
+                weekKey,
+                wallet: { $regex: new RegExp(`^${wallet}$`, 'i') } as any,
+                type: 'individual_claim'
+            } as any);
+
+            if (!claim) {
+                return this.respond(response, aborted, 404, {
+                    status: 'not_found',
+                    txHash: null
+                });
+            }
+
+            return this.respond(response, aborted, 200, {
+                status: claim.status,
+                txHash: claim.txHash || null,
+                rank: claim.rank,
+                amount: claim.amount,
+                error: claim.error || null
+            });
+
+        } catch (error) {
+            log.error('[RewardsAPI] Claim status error:');
+            log.error(error);
+            return this.respond(response, aborted, 500, { error: 'internal_error' });
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  GET /api/rewards/health
+    //  Returns service status, XRPL connectivity, and DB state
+    // ═══════════════════════════════════════════════════════════
+
+    public async handleHealth(response: HttpResponse, _request: HttpRequest): Promise<void> {
+        let aborted = false;
+        response.onAborted(() => { aborted = true; });
+
+        let mongoConnected = false;
+        let xrplConnected = false;
+        let seedConfigured = false;
+
+        // Check MongoDB
+        try {
+            await this.database.command({ ping: 1 });
+            mongoConnected = true;
+        } catch {
+            mongoConnected = false;
+        }
+
+        // Check COMMUNITY_NUT_JAR_SEED
+        seedConfigured = !!process.env.COMMUNITY_NUT_JAR_SEED;
+
+        // Quick XRPL connectivity test (1s timeout)
+        if (xrplModule) {
+            const client = new xrplModule.Client(XRPL_SERVERS[0], {
+                connectionTimeout: 3000
+            });
+            try {
+                await client.connect();
+                xrplConnected = true;
+                await client.disconnect();
+            } catch {
+                xrplConnected = false;
+                try { await client.disconnect(); } catch { /* noop */ }
+            }
+        }
+
+        return this.respond(response, aborted, 200, {
+            ok: true,
+            service: 'fuzzynuts-rewards',
+            timestamp: new Date().toISOString(),
+            mongoConnected,
+            xrplConnected,
+            seedConfigured,
+            prizePool: PRIZES
+        });
+    }
+
     // ── CORS Preflight ──
 
     public handleOptions(response: HttpResponse): void {
@@ -540,6 +648,7 @@ export default class RewardsAPI {
         const statusText = status === 200 ? '200 OK' :
                           status === 400 ? '400 Bad Request' :
                           status === 403 ? '403 Forbidden' :
+                          status === 404 ? '404 Not Found' :
                           status === 409 ? '409 Conflict' :
                           status === 413 ? '413 Payload Too Large' :
                           status === 429 ? '429 Too Many Requests' :

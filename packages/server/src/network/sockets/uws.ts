@@ -82,9 +82,29 @@ export default class UWS extends WebSocket {
             }
         });
 
-        // ── Prize Rewards API routes (eligibility + claiming) ──
+        // ── Prize Rewards API routes (eligibility + claiming + health) ──
         app.get('/api/rewards/eligibility', (res: HttpResponse, req: HttpRequest) => {
             if (this.rewardsAPI) this.rewardsAPI.handleEligibility(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.get('/api/rewards/claim/status', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleClaimStatus(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.get('/api/rewards/health', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleHealth(res, req);
             else {
                 res.writeStatus('503 Service Unavailable');
                 res.writeHeader('Content-Type', 'application/json');
