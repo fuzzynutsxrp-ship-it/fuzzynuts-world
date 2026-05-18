@@ -198,11 +198,14 @@ export default class Incoming {
             // Format username by making it all lower case, shorter than 32 characters, and no spaces.
             this.player.username = Filter.clean(username.toLowerCase().slice(0, 32).trim());
 
-            // Verify that the password fulfills the requirements.
-            if (!Utils.isValidPassword(password)) return this.connection.reject('invalidpassword');
+            // Wallet logins don't use passwords — skip password validation.
+            if (opcode !== Opcodes.Login.Wallet) {
+                // Verify that the password fulfills the requirements.
+                if (!Utils.isValidPassword(password)) return this.connection.reject('invalidpassword');
 
-            if (password) this.player.password = password.slice(0, 64);
-            if (email) this.player.email = email;
+                if (password) this.player.password = password.slice(0, 64);
+                if (email) this.player.email = email;
+            }
 
             // Reject connection if player is already logged in.
             if (this.world.isOnline(this.player.username))
