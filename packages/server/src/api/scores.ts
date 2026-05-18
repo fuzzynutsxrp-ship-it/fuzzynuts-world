@@ -41,7 +41,8 @@ const SCORE_CAPS: Record<string, number> = {
     survivors: 999999,
     minigolf: 10500,
     kaetram: 9999999,
-    nutracer: 99999
+    nutracer: 99999,
+    'fuzzynuts-world': 10_000_000
 };
 
 const VALID_GAMES = Object.keys(SCORE_CAPS);

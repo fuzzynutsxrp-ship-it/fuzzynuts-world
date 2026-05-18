@@ -80,6 +80,7 @@ export interface Config {
 
     enableWalletAuth: boolean;
     walletAuthMock: boolean;
+    arcadeIntegrationEnabled: boolean;
 
     debugging: boolean;
     debugLevel: 'all';

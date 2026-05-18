@@ -4,6 +4,7 @@ import { trackRewardVelocity } from '../../../../api/scores';
 import achievements from '../../../../../data/achievements.json';
 import Item from '../../objects/item';
 
+import config from '@kaetram/common/config';
 import log from '@kaetram/common/util/log';
 
 import { Opcodes } from '@kaetram/common/network';
@@ -18,6 +19,28 @@ import type { PopupData } from '@kaetram/common/types/popup';
 import type NPC from '../../npc/npc';
 import type Mob from '../mob/mob';
 import type Player from './player';
+
+/* ── Arcade scoring constants ── */
+
+/** Points awarded per achievement type */
+const ACHIEVEMENT_POINTS = {
+    standard: 100,
+    questGated: 250,
+    secret: 500
+} as const;
+
+/** Game ID used on the arcade leaderboard */
+const ARCADE_GAME_ID = 'fuzzynuts-world';
+
+/** ISO week key (e.g. "2026-W20") */
+function getCurrentWeekKey(): string {
+    let now = new Date(),
+        d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    let yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)),
+        weekNum = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
 
 export default class Achievements {
     private achievements: { [key: string]: Achievement } = {};
@@ -99,6 +122,9 @@ export default class Achievements {
         // Queue $NUT reward if this achievement has one configured.
         this.queueNutReward(key);
 
+        // Submit score to arcade leaderboard.
+        this.submitArcadeScore(key);
+
         // Update dynamic tiles.
         this.player.updateRegion();
         this.player.save();
@@ -162,6 +188,89 @@ export default class Achievements {
             }
         }).catch((error) => {
             log.error(`[Rewards] Unexpected error in queueNutReward: ${error.message}`);
+        });
+    }
+
+    /**
+     * Submits the player's cumulative achievement score to the arcade leaderboard.
+     * Fire-and-forget — never blocks the game thread.
+     * 
+     * Scoring model:
+     *   - Standard achievement: 100 points
+     *   - Quest-gated (has NPC dialogue): 250 points
+     *   - Secret achievement: 500 points
+     * 
+     * Total is upserted per wallet+game+week. Only updates if new total > existing.
+     * @param completedKey The key of the just-completed achievement.
+     */
+
+    private submitArcadeScore(completedKey: string): void {
+        // Guard: feature flag, wallet required
+        if (!config.arcadeIntegrationEnabled) return;
+        if (!this.player.walletAddress) return;
+
+        const wallet = this.player.walletAddress;
+
+        Promise.resolve().then(async () => {
+            const db = this.player.database.getDb?.();
+            if (!db) return;
+
+            // Calculate cumulative score from all completed achievements
+            let totalScore = 0;
+
+            this.forEachAchievement((achievement: Achievement) => {
+                if (!achievement.isFinished()) return;
+
+                if (achievement.secret) {
+                    totalScore += ACHIEVEMENT_POINTS.secret;
+                } else if (achievement.name.includes('Generic')) {
+                    // Standard mob-kill type
+                    totalScore += ACHIEVEMENT_POINTS.standard;
+                } else {
+                    // Quest-gated (NPC dialogue, multi-stage)
+                    totalScore += ACHIEVEMENT_POINTS.questGated;
+                }
+            });
+
+            if (totalScore <= 0) return;
+
+            const weekKey = getCurrentWeekKey();
+            const collection = db.collection('arcade_scores');
+
+            try {
+                // Upsert: only update if new score > existing score
+                const existing = await collection.findOne({
+                    wallet,
+                    game: ARCADE_GAME_ID,
+                    weekKey
+                });
+
+                if (existing) {
+                    if (totalScore > existing.score) {
+                        await collection.updateOne(
+                            { wallet, game: ARCADE_GAME_ID, weekKey },
+                            { $set: { score: totalScore, submittedAt: Date.now() } }
+                        );
+                        log.info(`[Arcade] Updated score: ${wallet} ${existing.score} → ${totalScore}`);
+                    }
+                } else {
+                    await collection.insertOne({
+                        wallet,
+                        game: ARCADE_GAME_ID,
+                        score: totalScore,
+                        weekKey,
+                        submittedAt: Date.now(),
+                        ip: 'server-internal'
+                    });
+                    log.info(`[Arcade] New score: ${wallet} ${ARCADE_GAME_ID} ${totalScore}`);
+                }
+            } catch (error: any) {
+                // Duplicate key is fine — another process may have inserted concurrently
+                if (error.code !== 11000)
+                    log.error(`[Arcade] Failed to submit score: ${error.message}`);
+            }
+        }).catch((error) => {
+            log.error(`[Arcade] Unexpected error in submitArcadeScore: ${error.message}`);
         });
     }
 
