@@ -520,7 +520,9 @@ export default class RewardsAPI {
                         txHash,
                         completedAt: new Date(),
                         ...(error && { error }),
-                        ...(xrplResult && { xrplResult })
+                        ...(xrplResult && { xrplResult }),
+                        // Clear stale error on success so claim/status returns clean
+                        ...(status === 'success' && { error: null })
                     }
                 }
             );
