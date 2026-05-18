@@ -397,7 +397,23 @@ export default class RewardsAPI {
                     await xrplClient.connect();
                     log.info(`[RewardsAPI] Connected to ${server} for claim: ${wallet}`);
 
-                    const distributorWallet = xrpl.Wallet.fromSeed(seed);
+                    // Auto-detect seed format and create wallet accordingly
+                    let distributorWallet;
+                    const trimmedSeed = seed.trim();
+
+                    if (/^[\d\s]+$/.test(trimmedSeed)) {
+                        // Xaman secret numbers format: "123456 234567 345678 ..."
+                        log.info('[RewardsAPI] Detected secret numbers format, using walletFromSecretNumbers()');
+                        distributorWallet = xrpl.walletFromSecretNumbers(trimmedSeed);
+                    } else if (trimmedSeed.startsWith('s')) {
+                        // Base58 family seed: "sEdV19..."
+                        log.info('[RewardsAPI] Using Wallet.fromSeed()');
+                        distributorWallet = xrpl.Wallet.fromSeed(trimmedSeed);
+                    } else {
+                        // Mnemonic phrase: "word1 word2 word3 ..."
+                        log.info('[RewardsAPI] Using Wallet.fromMnemonic()');
+                        distributorWallet = xrpl.Wallet.fromMnemonic(trimmedSeed);
+                    }
 
                     log.info(`[RewardsAPI] Distributor address: ${distributorWallet.address}`);
 
