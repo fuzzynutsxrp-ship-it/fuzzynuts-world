@@ -47,7 +47,12 @@ interface PrizeDistributionRecord {
 
 const NUT_CURRENCY = 'NUT';
 const NUT_ISSUER = 'rpL6HfoV578CAkZoNbm3UEK5BgVY9DxMP7';
-const XRPL_SERVER = 'wss://xrplcluster.com';
+const XRPL_SERVERS = [
+    'wss://xrplcluster.com',
+    'wss://s1.ripple.com',
+    'wss://s2.ripple.com'
+];
+const XRPL_CONNECT_TIMEOUT_MS = 10_000;
 const MAX_BODY_SIZE = 2048;
 
 const XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
@@ -379,69 +384,85 @@ export default class RewardsAPI {
                 });
             }
 
-            const xrplClient = new xrpl.Client(XRPL_SERVER);
+            // Try each XRPL server until one works
+            let lastError = '';
 
-            try {
-                await xrplClient.connect();
-                log.info(`[RewardsAPI] Connected to XRPL for claim: ${wallet}`);
-
-                const distributorWallet = xrpl.Wallet.fromSeed(seed);
-
-                const payment = {
-                    TransactionType: 'Payment',
-                    Account: distributorWallet.address,
-                    Destination: wallet,
-                    Amount: {
-                        currency: NUT_CURRENCY,
-                        issuer: NUT_ISSUER,
-                        value: prize.amount
-                    },
-                    Memos: [{
-                        Memo: {
-                            MemoType: Buffer.from('fuzzynuts-arcade-prize', 'utf8').toString('hex').toUpperCase(),
-                            MemoData: Buffer.from(
-                                `Fuzzynuts Reward W${weekKey} R${match.rank} Score:${match.total}`,
-                                'utf8'
-                            ).toString('hex').toUpperCase()
-                        }
-                    }]
-                };
-
-                const prepared = await xrplClient.autofill(payment);
-                const signed = distributorWallet.sign(prepared);
-                const result = await xrplClient.submitAndWait(signed.tx_blob);
-
-                const txResult = result.result.meta?.TransactionResult;
-                const txHash = result.result.hash;
-
-                if (txResult === 'tesSUCCESS') {
-                    await this.updateClaimStatus(weekKey, wallet, 'success', txHash, undefined, txResult);
-
-                    log.info(`[RewardsAPI] ✅ Claim successful: ${txHash}`);
-                    return this.respond(response, aborted, 200, {
-                        success: true,
-                        txHash
-                    });
-                } else {
-                    await this.updateClaimStatus(weekKey, wallet, 'failed', null, txResult);
-
-                    log.error(`[RewardsAPI] ❌ XRPL rejected: ${txResult}`);
-                    return this.respond(response, aborted, 502, {
-                        error: `xrpl_transaction_failed: ${txResult}`
-                    });
-                }
-
-            } catch (xrplErr: any) {
-                await this.updateClaimStatus(weekKey, wallet, 'error', null, xrplErr?.message);
-
-                log.error(`[RewardsAPI] ❌ XRPL error: ${xrplErr?.message}`);
-                return this.respond(response, aborted, 502, {
-                    error: 'xrpl_network_error'
+            for (const server of XRPL_SERVERS) {
+                const xrplClient = new xrpl.Client(server, {
+                    connectionTimeout: XRPL_CONNECT_TIMEOUT_MS
                 });
 
-            } finally {
-                try { await xrplClient.disconnect(); } catch { /* noop */ }
+                try {
+                    log.info(`[RewardsAPI] Connecting to ${server}...`);
+                    await xrplClient.connect();
+                    log.info(`[RewardsAPI] Connected to ${server} for claim: ${wallet}`);
+
+                    const distributorWallet = xrpl.Wallet.fromSeed(seed);
+
+                    log.info(`[RewardsAPI] Distributor address: ${distributorWallet.address}`);
+
+                    const payment = {
+                        TransactionType: 'Payment',
+                        Account: distributorWallet.address,
+                        Destination: wallet,
+                        Amount: {
+                            currency: NUT_CURRENCY,
+                            issuer: NUT_ISSUER,
+                            value: prize.amount
+                        },
+                        Memos: [{
+                            Memo: {
+                                MemoType: Buffer.from('fuzzynuts-arcade-prize', 'utf8').toString('hex').toUpperCase(),
+                                MemoData: Buffer.from(
+                                    `Fuzzynuts Reward W${weekKey} R${match.rank} Score:${match.total}`,
+                                    'utf8'
+                                ).toString('hex').toUpperCase()
+                            }
+                        }]
+                    };
+
+                    const prepared = await xrplClient.autofill(payment);
+                    const signed = distributorWallet.sign(prepared);
+                    const result = await xrplClient.submitAndWait(signed.tx_blob);
+
+                    const txResult = result.result.meta?.TransactionResult;
+                    const txHash = result.result.hash;
+
+                    try { await xrplClient.disconnect(); } catch { /* noop */ }
+
+                    if (txResult === 'tesSUCCESS') {
+                        await this.updateClaimStatus(weekKey, wallet, 'success', txHash, undefined, txResult);
+
+                        log.info(`[RewardsAPI] ✅ Claim successful: ${txHash}`);
+                        return this.respond(response, aborted, 200, {
+                            success: true,
+                            txHash
+                        });
+                    } else {
+                        await this.updateClaimStatus(weekKey, wallet, 'failed', null, txResult);
+
+                        log.error(`[RewardsAPI] ❌ XRPL rejected: ${txResult}`);
+                        return this.respond(response, aborted, 502, {
+                            error: `xrpl_transaction_failed`,
+                            detail: txResult
+                        });
+                    }
+
+                } catch (xrplErr: any) {
+                    lastError = xrplErr?.message || 'Unknown XRPL error';
+                    log.error(`[RewardsAPI] ❌ ${server} failed: ${lastError}`);
+                    try { await xrplClient.disconnect(); } catch { /* noop */ }
+                    // Try next server...
+                }
             }
+
+            // All servers failed
+            await this.updateClaimStatus(weekKey, wallet, 'error', null, lastError);
+            log.error(`[RewardsAPI] ❌ All XRPL servers failed. Last error: ${lastError}`);
+            return this.respond(response, aborted, 502, {
+                error: 'xrpl_network_error',
+                detail: lastError
+            });
 
         } catch (parseError) {
             log.error('[RewardsAPI] Claim parse error:');
