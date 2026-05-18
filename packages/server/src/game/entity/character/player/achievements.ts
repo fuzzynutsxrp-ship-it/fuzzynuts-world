@@ -192,15 +192,35 @@ export default class Achievements {
     }
 
     /**
-     * Submits the player's cumulative achievement score to the arcade leaderboard.
+     * Get point value for an achievement based on its type.
+     * @param achievement The achievement to score.
+     * @returns Point value: 500 (secret), 250 (quest-gated), 100 (standard).
+     */
+
+    private getAchievementPoints(achievement: Achievement): number {
+        if (achievement.secret) return ACHIEVEMENT_POINTS.secret;
+
+        // Standard mob-kill type achievements use "Generic Task" naming
+        if (achievement.name.includes('Generic')) return ACHIEVEMENT_POINTS.standard;
+
+        // Everything else is quest-gated (NPC dialogue, multi-stage, etc.)
+        return ACHIEVEMENT_POINTS.questGated;
+    }
+
+    /**
+     * Submits achievement points to the arcade leaderboard via atomic $inc.
      * Fire-and-forget — never blocks the game thread.
-     * 
-     * Scoring model:
-     *   - Standard achievement: 100 points
-     *   - Quest-gated (has NPC dialogue): 250 points
-     *   - Secret achievement: 500 points
-     * 
-     * Total is upserted per wallet+game+week. Only updates if new total > existing.
+     *
+     * Uses MongoDB atomic operations:
+     *   $inc   — adds points to cumulative score (no read-before-write)
+     *   $push  — appends achievement to audit trail
+     *   $set   — updates last activity timestamp
+     *   $setOnInsert — sets initial metadata on first insert
+     *
+     * Idempotency: the $push audit trail records every call, but duplicate
+     * achievement completions are already prevented by the Achievement class
+     * itself (isFinished() gate in setStage).
+     *
      * @param completedKey The key of the just-completed achievement.
      */
 
@@ -210,62 +230,50 @@ export default class Achievements {
         if (!this.player.walletAddress) return;
 
         const wallet = this.player.walletAddress;
+        const achievement = this.get(completedKey);
+
+        if (!achievement) return;
+
+        const points = this.getAchievementPoints(achievement);
 
         Promise.resolve().then(async () => {
             const db = this.player.database.getDb?.();
             if (!db) return;
 
-            // Calculate cumulative score from all completed achievements
-            let totalScore = 0;
-
-            this.forEachAchievement((achievement: Achievement) => {
-                if (!achievement.isFinished()) return;
-
-                if (achievement.secret) {
-                    totalScore += ACHIEVEMENT_POINTS.secret;
-                } else if (achievement.name.includes('Generic')) {
-                    // Standard mob-kill type
-                    totalScore += ACHIEVEMENT_POINTS.standard;
-                } else {
-                    // Quest-gated (NPC dialogue, multi-stage)
-                    totalScore += ACHIEVEMENT_POINTS.questGated;
-                }
-            });
-
-            if (totalScore <= 0) return;
-
             const weekKey = getCurrentWeekKey();
             const collection = db.collection('arcade_scores');
+            const now = Date.now();
 
             try {
-                // Upsert: only update if new score > existing score
-                const existing = await collection.findOne({
-                    wallet,
-                    game: ARCADE_GAME_ID,
-                    weekKey
-                });
+                await collection.updateOne(
+                    { wallet, game: ARCADE_GAME_ID, weekKey },
+                    {
+                        $inc: { score: points },
+                        $push: {
+                            achievements: {
+                                id: completedKey,
+                                name: achievement.name,
+                                points,
+                                timestamp: now
+                            }
+                        } as any,
+                        $set: {
+                            submittedAt: now,
+                            ip: 'server-internal'
+                        },
+                        $setOnInsert: {
+                            playerUsername: this.player.username,
+                            firstSeen: now
+                        }
+                    },
+                    { upsert: true }
+                );
 
-                if (existing) {
-                    if (totalScore > existing.score) {
-                        await collection.updateOne(
-                            { wallet, game: ARCADE_GAME_ID, weekKey },
-                            { $set: { score: totalScore, submittedAt: Date.now() } }
-                        );
-                        log.info(`[Arcade] Updated score: ${wallet} ${existing.score} → ${totalScore}`);
-                    }
-                } else {
-                    await collection.insertOne({
-                        wallet,
-                        game: ARCADE_GAME_ID,
-                        score: totalScore,
-                        weekKey,
-                        submittedAt: Date.now(),
-                        ip: 'server-internal'
-                    });
-                    log.info(`[Arcade] New score: ${wallet} ${ARCADE_GAME_ID} ${totalScore}`);
-                }
+                log.info(
+                    `[Arcade] +${points} pts for "${completedKey}" → ${wallet} (week: ${weekKey})`
+                );
             } catch (error: any) {
-                // Duplicate key is fine — another process may have inserted concurrently
+                // Duplicate key (11000) is fine — concurrent insert race
                 if (error.code !== 11000)
                     log.error(`[Arcade] Failed to submit score: ${error.message}`);
             }
