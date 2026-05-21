@@ -41,7 +41,14 @@ export default class ScoreChangeStream {
     public start(): void {
         this.closed = false;
         this.reconnectAttempt = 0;
-        this.openStream();
+        try {
+            this.openStream();
+        } catch (err) {
+            log.warning('[ChangeStream] Failed to start — SSE will use polling fallback only.');
+            log.warning(`[ChangeStream] Reason: ${err}`);
+            this.closed = true;
+            return;
+        }
         log.info('[ChangeStream] Watching arcade_scores for changes.');
     }
 
@@ -121,6 +128,15 @@ export default class ScoreChangeStream {
             });
 
             this.stream.on('error', (error: Error) => {
+                // Prevent unhandled rejection crash
+                const msg = String(error);
+                if (msg.includes('not a replica set') || msg.includes('not supported') || msg.includes('no such command') || msg.includes('ChangeStream')) {
+                    log.warning('[ChangeStream] ⚠️ Async error confirms standalone MongoDB — disabling change streams.');
+                    this.closed = true;
+                    try { this.stream?.close(); } catch { /* noop */ }
+                    this.stream = null;
+                    return;
+                }
                 log.error('[ChangeStream] Stream error:');
                 log.error(error);
                 this.scheduleReconnect();
