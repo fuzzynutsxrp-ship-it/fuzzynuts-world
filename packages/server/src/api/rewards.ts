@@ -508,23 +508,27 @@ export default class RewardsAPI {
         xrplResult?: string
     ): Promise<void> {
         try {
+            const $set: Record<string, unknown> = {
+                status,
+                completedAt: new Date(),
+                ...(txHash != null && { txHash }),
+                ...(error && { error }),
+                ...(xrplResult && { xrplResult })
+            };
+
+            // On success, remove stale error field entirely
+            const update: Record<string, unknown> = { $set };
+            if (status === 'success') {
+                update.$unset = { error: '' };
+            }
+
             await this.prizesCol.updateOne(
                 {
                     weekKey,
                     wallet: { $regex: new RegExp(`^${wallet}$`, 'i') } as any,
                     type: 'individual_claim'
                 },
-                {
-                    $set: {
-                        status,
-                        txHash,
-                        completedAt: new Date(),
-                        ...(error && { error }),
-                        ...(xrplResult && { xrplResult }),
-                        // Clear stale error on success so claim/status returns clean
-                        ...(status === 'success' && { error: null })
-                    }
-                }
+                update as any
             );
         } catch (dbError) {
             log.error(`[RewardsAPI] Failed to update claim status: ${dbError}`);
