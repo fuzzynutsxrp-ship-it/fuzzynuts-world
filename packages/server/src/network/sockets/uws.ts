@@ -1,6 +1,7 @@
 import WebSocket from '../websocket';
 import Connection from '../connection';
 import ScoresAPI from '../../api/scores';
+import ScoresStreamAPI from '../../api/scores-stream';
 import RewardsAPI from '../../api/rewards';
 
 import log from '@kaetram/common/util/log';
@@ -17,6 +18,7 @@ import type MongoDB from '@kaetram/common/database/mongodb/mongodb';
 
 export default class UWS extends WebSocket {
     private scoresAPI?: ScoresAPI;
+    private scoresStreamAPI?: ScoresStreamAPI;
     private rewardsAPI?: RewardsAPI;
 
     public constructor(socketHandler: SocketHandler, database?: MongoDB) {
@@ -28,6 +30,9 @@ export default class UWS extends WebSocket {
             this.scoresAPI = new ScoresAPI(db);
             log.info('[UWS] Scores API routes registered at /api/scores');
 
+            this.scoresStreamAPI = new ScoresStreamAPI(db);
+            log.info('[UWS] SSE stream registered at /api/scores/stream');
+
             this.rewardsAPI = new RewardsAPI(db);
             log.info('[UWS] Prize Rewards API routes registered at /api/rewards/eligibility, /api/rewards/claim');
         }
@@ -35,6 +40,26 @@ export default class UWS extends WebSocket {
         const app = App({});
 
         // ── Register API routes BEFORE catch-all static handler ──
+
+        // ── SSE Stream (must be before /api/scores catch) ──
+        app.get('/api/scores/stream', (res: HttpResponse, req: HttpRequest) => {
+            if (this.scoresStreamAPI) this.scoresStreamAPI.handleStream(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        app.options('/api/scores/stream', (res: HttpResponse, req: HttpRequest) => {
+            if (this.scoresStreamAPI) this.scoresStreamAPI.handleOptions(res, req);
+            else {
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end();
+            }
+        });
+
         app.get('/api/scores', (res: HttpResponse, req: HttpRequest) => {
             if (this.scoresAPI) this.scoresAPI.handleGet(res, req);
             else {
