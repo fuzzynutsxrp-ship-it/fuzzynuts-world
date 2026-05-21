@@ -64,11 +64,14 @@ export default class MongoDB {
      */
 
     public createConnection(): void {
+        // When using MONGO_URL (e.g. Atlas SRV), don't override TLS —
+        // mongodb+srv:// defaults to tls=true which Atlas requires.
+        // Only explicitly set tls when using manual host/port config.
         let client = new MongoClient(this.connectionUrl, {
             connectTimeoutMS: 5000,
             serverSelectionTimeoutMS: 5000,
             wtimeoutMS: 10,
-            tls: this.tls
+            ...(process.env.MONGO_URL ? {} : { tls: this.tls })
         });
 
         client
