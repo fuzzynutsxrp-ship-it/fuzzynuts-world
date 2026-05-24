@@ -1,10 +1,10 @@
 /**
  * ═══════════════════════════════════════════════════════════════
  * FUZZYNUTS ARCADE — Scores API
- * 
+ *
  * Lightweight REST endpoints for the arcade leaderboard.
  * Mounted on the existing uws server alongside the game WS.
- * 
+ *
  * GET  /api/scores?week=2024-W26&game=mario
  * POST /api/scores  { game, score, wallet, timestamp }
  * ═══════════════════════════════════════════════════════════════
@@ -34,26 +34,48 @@ interface ScoreSubmission {
     duration?: number;
 }
 
+/* ── Reward collection shapes (handleRewardsGet) ── */
+
+interface RewardConfig {
+    key: string;
+    name: string;
+    desc: string;
+    reward_nut: number;
+    active: boolean;
+}
+
+interface RewardEntry {
+    wallet: string;
+    achievement_id: string;
+    amount: number;
+    status: string;
+    tx_hash?: string | null;
+    created_at: number;
+    processed_at?: number | null;
+}
+
 // ── Constants ──
 
-const SCORE_CAPS: Record<string, number> = {
-    mario: 99999,
-    survivors: 999999,
-    minigolf: 10500,
-    kaetram: 9999999,
-    nutracer: 99999,
-    'fuzzynuts-world': 10_000_000
-};
+// Slug keys MUST match what the iframe's fuzzy-score.js POSTs and what
+// the frontend's slugAliases.ts translates to. Frontend canonical slugs
+// `fuzzy-survivors` / `nut-racer` get aliased to `survivors` / `racer`
+// before the request hits this server.
+const SCORE_CAPS: { [key: string]: number } = {
+        mario: 99_999,
+        survivors: 999_999,
+        minigolf: 10_500,
+        racer: 99_999,
+        'top-secret': 999_999,
+        'fuzzynuts-world': 10_000_000
+    },
+    VALID_GAMES = Object.keys(SCORE_CAPS),
+    MIN_DURATION_SEC = 15,
+    RATE_LIMIT_MS = 60 * 1000, // 1 submission per minute per wallet per game
+    MAX_BODY_SIZE = 2048, // 2KB max request body
+    XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/,
+    // ── Rate limiting state (in-memory) ──
 
-const VALID_GAMES = Object.keys(SCORE_CAPS);
-const MIN_DURATION_SEC = 15;
-const RATE_LIMIT_MS = 60 * 1000; // 1 submission per minute per wallet per game
-const MAX_BODY_SIZE = 2048; // 2KB max request body
-const XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
-
-// ── Rate limiting state (in-memory) ──
-
-const rateLimits: Map<string, number> = new Map();
+    rateLimits: Map<string, number> = new Map();
 
 // ── Anti-bot reward velocity tracker (in-memory) ──
 // Tracks reward_queue insertions per wallet per hour. Flags >10/hr for review.
@@ -64,27 +86,29 @@ interface VelocityEntry {
     flaggedAt?: number;
 }
 
-const rewardVelocity: Map<string, VelocityEntry> = new Map();
-const VELOCITY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const VELOCITY_THRESHOLD = 10; // Max rewards per hour before flagging
+const rewardVelocity: Map<string, VelocityEntry> = new Map(),
+    VELOCITY_WINDOW_MS = 60 * 60 * 1000, // 1 hour
+    VELOCITY_THRESHOLD = 10; // Max rewards per hour before flagging
 
 /**
  * Record a reward event for velocity tracking. Returns true if the wallet
  * is now flagged (superhuman rate detected).
  */
 export function trackRewardVelocity(wallet: string): boolean {
-    const now = Date.now();
-    let entry = rewardVelocity.get(wallet);
+    let now = Date.now(),
+        entry = rewardVelocity.get(wallet);
     if (!entry) entry = { timestamps: [], flagged: false };
 
     // Trim old timestamps outside the window
-    entry.timestamps = entry.timestamps.filter(t => now - t < VELOCITY_WINDOW_MS);
+    entry.timestamps = entry.timestamps.filter((t) => now - t < VELOCITY_WINDOW_MS);
     entry.timestamps.push(now);
 
     if (entry.timestamps.length > VELOCITY_THRESHOLD && !entry.flagged) {
         entry.flagged = true;
         entry.flaggedAt = now;
-        log.warning(`[AntiBot] 🚨 Wallet ${wallet} flagged: ${entry.timestamps.length} rewards in 1hr (threshold: ${VELOCITY_THRESHOLD})`);
+        log.warning(
+            `[AntiBot] 🚨 Wallet ${wallet} flagged: ${entry.timestamps.length} rewards in 1hr (threshold: ${VELOCITY_THRESHOLD})`
+        );
     }
 
     rewardVelocity.set(wallet, entry);
@@ -95,46 +119,47 @@ export function trackRewardVelocity(wallet: string): boolean {
  * Get all currently flagged wallets for admin review.
  */
 export function getFlaggedWallets(): { wallet: string; count: number; flaggedAt: number }[] {
-    const flagged: { wallet: string; count: number; flaggedAt: number }[] = [];
-    const now = Date.now();
-    for (const [wallet, entry] of rewardVelocity) {
+    let flagged: { wallet: string; count: number; flaggedAt: number }[] = [],
+        now = Date.now();
+    for (let [wallet, entry] of rewardVelocity)
         if (entry.flagged) {
-            const recentCount = entry.timestamps.filter(t => now - t < VELOCITY_WINDOW_MS).length;
+            let recentCount = entry.timestamps.filter((t) => now - t < VELOCITY_WINDOW_MS).length;
             flagged.push({ wallet, count: recentCount, flaggedAt: entry.flaggedAt! });
         }
-    }
+
     return flagged;
 }
 
 function isRateLimited(key: string): boolean {
-    const last = rateLimits.get(key);
+    let last = rateLimits.get(key);
     if (last && Date.now() - last < RATE_LIMIT_MS) return true;
     rateLimits.set(key, Date.now());
     return false;
 }
 
 // Clean up old entries every 5 minutes
-setInterval(() => {
-    const cutoff = Date.now() - RATE_LIMIT_MS * 2;
-    for (const [key, time] of rateLimits) {
-        if (time < cutoff) rateLimits.delete(key);
-    }
-}, 5 * 60 * 1000);
+setInterval(
+    () => {
+        let cutoff = Date.now() - RATE_LIMIT_MS * 2;
+        for (let [key, time] of rateLimits) if (time < cutoff) rateLimits.delete(key);
+    },
+    5 * 60 * 1000
+);
 
 // ── Week key calculation (ISO 8601) ──
 
 function getCurrentWeekKey(): string {
-    const now = new Date();
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    let now = new Date(),
+        d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNum = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+    let yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)),
+        weekNum = Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
     return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
 function truncateAddress(addr: string): string {
     if (!addr || addr.length < 10) return addr;
-    return addr.slice(0, 6) + '...' + addr.slice(-4);
+    return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 // ── API Handler Class ──
@@ -154,10 +179,7 @@ export default class ScoresAPI {
     private async ensureIndexes(): Promise<void> {
         try {
             // Compound unique index: one score per wallet+game+week (idempotency)
-            await this.collection.createIndex(
-                { wallet: 1, game: 1, weekKey: 1 },
-                { unique: true }
-            );
+            await this.collection.createIndex({ wallet: 1, game: 1, weekKey: 1 }, { unique: true });
             // For leaderboard queries
             await this.collection.createIndex({ weekKey: 1, game: 1, score: -1 });
             await this.collection.createIndex({ weekKey: 1, score: -1 });
@@ -173,54 +195,69 @@ export default class ScoresAPI {
     public async handleGet(response: HttpResponse, request: HttpRequest): Promise<void> {
         // uws requires us to cork and handle aborted connections
         let aborted = false;
-        response.onAborted(() => { aborted = true; });
+        response.onAborted(() => {
+            aborted = true;
+        });
 
         try {
-            const query = request.getQuery();
-            const params = new URLSearchParams(query);
-            const weekKey = params.get('week') || getCurrentWeekKey();
-            const game = params.get('game') || null;
+            let query = request.getQuery(),
+                params = new URLSearchParams(query),
+                weekKey = params.get('week') || getCurrentWeekKey(),
+                game = params.get('game') || null,
+                entries: ScoreEntry[];
 
-            let entries: ScoreEntry[];
-
-            if (game && VALID_GAMES.includes(game)) {
+            if (game && !VALID_GAMES.includes(game))
+                // Unknown game slug — return empty list. The previous behavior
+                // (falling through to the all-games branch and returning the
+                // entire week's combined leaderboard under the unknown slug)
+                // caused the frontend to show e.g. mario scores under a
+                // `?game=racer` query, which looked like data leakage between
+                // games on the per-game leaderboard tabs.
+                entries = [];
+            else if (game)
                 // Per-game leaderboard
                 entries = await this.collection
                     .find({ weekKey, game })
                     .sort({ score: -1 })
                     .limit(20)
                     .toArray();
-            } else {
-                // All games for the week
+            // No game param — combined leaderboard for the week
+            else
                 entries = await this.collection
                     .find({ weekKey })
                     .sort({ score: -1 })
                     .limit(100)
                     .toArray();
-            }
 
             // Build response — strip IP addresses
-            const leaderboard = entries.map((e, i) => ({
-                rank: i + 1,
-                wallet: e.wallet,
-                name: truncateAddress(e.wallet),
-                game: e.game,
-                score: e.score,
-                weekKey: e.weekKey
-            }));
-
-            // Build combined leaderboard if no specific game requested
-            let combined: { wallet: string; name: string; total: number; games: Record<string, number> }[] = [];
+            let leaderboard = entries.map((e, i) => ({
+                    rank: i + 1,
+                    wallet: e.wallet,
+                    name: truncateAddress(e.wallet),
+                    game: e.game,
+                    score: e.score,
+                    weekKey: e.weekKey
+                })),
+                // Build combined leaderboard if no specific game requested
+                combined: {
+                    wallet: string;
+                    name: string;
+                    total: number;
+                    games: { [key: string]: number };
+                }[] = [];
 
             if (!game) {
-                const playerMap = new Map<string, { total: number; games: Record<string, number> }>();
-                for (const e of entries) {
-                    const existing = playerMap.get(e.wallet) || { total: 0, games: {} };
+                let playerMap = new Map<
+                    string,
+                    { total: number; games: { [key: string]: number } }
+                >();
+                for (let e of entries) {
+                    let existing = playerMap.get(e.wallet) || { total: 0, games: {} };
                     existing.games[e.game] = e.score;
                     existing.total += e.score;
                     playerMap.set(e.wallet, existing);
                 }
-                combined = Array.from(playerMap.entries())
+                combined = [...playerMap.entries()]
                     .map(([wallet, data]) => ({
                         wallet,
                         name: truncateAddress(wallet),
@@ -231,32 +268,30 @@ export default class ScoresAPI {
                     .slice(0, 20);
             }
 
-            const responseBody = JSON.stringify({
+            let responseBody = JSON.stringify({
                 ok: true,
                 weekKey,
                 game: game || 'combined',
                 leaderboard: game ? leaderboard : undefined,
-                combined: !game ? combined : undefined
+                combined: game ? undefined : combined
             });
 
-            if (!aborted) {
+            if (!aborted)
                 response.cork(() => {
                     response.writeHeader('Content-Type', 'application/json');
                     response.writeHeader('Access-Control-Allow-Origin', '*');
                     response.end(responseBody);
                 });
-            }
         } catch (error) {
             log.error('[ScoresAPI] GET error:');
             log.error(error);
-            if (!aborted) {
+            if (!aborted)
                 response.cork(() => {
                     response.writeStatus('500 Internal Server Error');
                     response.writeHeader('Content-Type', 'application/json');
                     response.writeHeader('Access-Control-Allow-Origin', '*');
                     response.end(JSON.stringify({ ok: false, error: 'internal_error' }));
                 });
-            }
         }
     }
 
@@ -264,33 +299,33 @@ export default class ScoresAPI {
 
     public handlePost(response: HttpResponse, request: HttpRequest): void {
         let aborted = false;
-        response.onAborted(() => { aborted = true; });
+        response.onAborted(() => {
+            aborted = true;
+        });
 
-        const ip = request.getHeader('cf-connecting-ip') || 
-                   request.getHeader('x-forwarded-for') || 
-                   'unknown';
-
-        // Read body with size limit
-        let bodyBuffer = Buffer.alloc(0);
+        let ip =
+                request.getHeader('cf-connecting-ip') ||
+                request.getHeader('x-forwarded-for') ||
+                'unknown',
+            // Read body with size limit
+            bodyBuffer = Buffer.alloc(0);
 
         response.onData((chunk, isLast) => {
             bodyBuffer = Buffer.concat([bodyBuffer, Buffer.from(chunk)]);
 
             if (bodyBuffer.length > MAX_BODY_SIZE) {
-                if (!aborted) {
+                if (!aborted)
                     response.cork(() => {
                         response.writeStatus('413 Payload Too Large');
                         response.writeHeader('Content-Type', 'application/json');
                         response.writeHeader('Access-Control-Allow-Origin', '*');
                         response.end(JSON.stringify({ ok: false, error: 'payload_too_large' }));
                     });
-                }
+
                 return;
             }
 
-            if (isLast) {
-                this.processSubmission(bodyBuffer.toString(), ip, response, aborted);
-            }
+            if (isLast) this.processSubmission(bodyBuffer.toString(), ip, response, aborted);
         });
     }
 
@@ -301,76 +336,79 @@ export default class ScoresAPI {
         aborted: boolean
     ): Promise<void> {
         try {
-            const data: ScoreSubmission = JSON.parse(body);
-            const { game, score, wallet, timestamp, duration } = data;
+            let data: ScoreSubmission = JSON.parse(body),
+                { game, score, wallet, timestamp, duration } = data;
 
             // ── Validation ──
 
-            if (!game || !VALID_GAMES.includes(game)) {
+            if (!game || !VALID_GAMES.includes(game))
                 return this.respond(response, aborted, 400, { ok: false, error: 'invalid_game' });
-            }
 
-            if (typeof score !== 'number' || score <= 0 || !isFinite(score)) {
+            if (typeof score !== 'number' || score <= 0 || !isFinite(score))
                 return this.respond(response, aborted, 400, { ok: false, error: 'invalid_score' });
-            }
 
-            if (!wallet || !XRPL_ADDRESS_RE.test(wallet)) {
+            if (!wallet || !XRPL_ADDRESS_RE.test(wallet))
                 return this.respond(response, aborted, 400, { ok: false, error: 'invalid_wallet' });
-            }
 
             // Score cap check
-            const cap = SCORE_CAPS[game] || 999999;
-            if (score > cap) {
-                return this.respond(response, aborted, 400, { ok: false, error: 'score_exceeds_cap', cap });
-            }
+            let cap = SCORE_CAPS[game] || 999_999;
+            if (score > cap)
+                return this.respond(response, aborted, 400, {
+                    ok: false,
+                    error: 'score_exceeds_cap',
+                    cap
+                });
 
             // Duration check
-            if (typeof duration === 'number' && duration < MIN_DURATION_SEC) {
-                return this.respond(response, aborted, 400, { ok: false, error: 'duration_too_short' });
-            }
+            if (typeof duration === 'number' && duration < MIN_DURATION_SEC)
+                return this.respond(response, aborted, 400, {
+                    ok: false,
+                    error: 'duration_too_short'
+                });
 
             // Timestamp freshness check (must be within 5 minutes)
-            if (timestamp && Math.abs(Date.now() - timestamp) > 5 * 60 * 1000) {
-                return this.respond(response, aborted, 400, { ok: false, error: 'timestamp_stale' });
-            }
+            if (timestamp && Math.abs(Date.now() - timestamp) > 5 * 60 * 1000)
+                return this.respond(response, aborted, 400, {
+                    ok: false,
+                    error: 'timestamp_stale'
+                });
 
             // Rate limiting: wallet + game
-            const rateKey = `${wallet}:${game}`;
-            if (isRateLimited(rateKey)) {
+            let rateKey = `${wallet}:${game}`;
+            if (isRateLimited(rateKey))
                 return this.respond(response, aborted, 429, { ok: false, error: 'rate_limited' });
-            }
 
             // IP-based rate limiting
-            const ipRateKey = `ip:${ip}`;
-            if (isRateLimited(ipRateKey)) {
+            let ipRateKey = `ip:${ip}`;
+            if (isRateLimited(ipRateKey))
                 return this.respond(response, aborted, 429, { ok: false, error: 'rate_limited' });
-            }
 
             // ── Upsert: keep only best score per wallet+game+week ──
 
-            const weekKey = getCurrentWeekKey();
-            const flooredScore = Math.floor(score);
+            let weekKey = getCurrentWeekKey(),
+                flooredScore = Math.floor(score),
+                existing = await this.collection.findOne({ wallet, game, weekKey });
 
-            const existing = await this.collection.findOne({ wallet, game, weekKey });
-
-            if (existing) {
+            if (existing)
                 if (flooredScore > existing.score) {
                     // New high score — update
                     await this.collection.updateOne(
                         { wallet, game, weekKey },
                         { $set: { score: flooredScore, submittedAt: Date.now(), ip } }
                     );
-                    log.info(`[ScoresAPI] Updated score: ${wallet} ${game} ${existing.score} → ${flooredScore}`);
-                } else {
-                    // Existing score is higher — no-op
+                    log.info(
+                        `[ScoresAPI] Updated score: ${wallet} ${game} ${existing.score} → ${flooredScore}`
+                    );
+                }
+                // Existing score is higher — no-op
+                else
                     return this.respond(response, aborted, 200, {
                         ok: true,
                         action: 'no_update',
                         currentBest: existing.score,
                         submitted: flooredScore
                     });
-                }
-            } else {
+            else {
                 // New entry
                 await this.collection.insertOne({
                     wallet,
@@ -412,84 +450,77 @@ export default class ScoresAPI {
 
     public async handleRewardsGet(response: HttpResponse, request: HttpRequest): Promise<void> {
         let aborted = false;
-        response.onAborted(() => { aborted = true; });
+        response.onAborted(() => {
+            aborted = true;
+        });
 
         try {
-            const query = request.getQuery();
-            const params = new URLSearchParams(query);
-            const wallet = params.get('wallet');
+            let query = request.getQuery(),
+                params = new URLSearchParams(query),
+                wallet = params.get('wallet');
 
-            if (!wallet || !XRPL_ADDRESS_RE.test(wallet)) {
+            if (!wallet || !XRPL_ADDRESS_RE.test(wallet))
                 return this.respond(response, aborted, 400, { ok: false, error: 'invalid_wallet' });
-            }
 
-            const rewardsCol = this.database.collection('reward_queue');
-            const configCol = this.database.collection('achievement_rewards');
+            let rewardsCol = this.database.collection<RewardEntry>('reward_queue'),
+                configCol = this.database.collection<RewardConfig>('achievement_rewards'),
+                // Fetch all rewards for this wallet
+                rewards = await rewardsCol
+                    .find({ wallet })
+                    .sort({ created_at: -1 })
+                    .limit(50)
+                    .toArray(),
+                // Fetch all active achievement reward configs for display
+                configs = await configCol.find({ active: true }).toArray(),
+                configMap = new Map<string, RewardConfig>(configs.map((c) => [c.key, c])),
+                // Build response — strip internal fields (ip, player_username)
+                rewardList = rewards.map((r) => ({
+                    achievement_id: r.achievement_id,
+                    achievement_name: configMap.get(r.achievement_id)?.name || r.achievement_id,
+                    achievement_desc: configMap.get(r.achievement_id)?.desc || '',
+                    amount: r.amount,
+                    status: r.status,
+                    tx_hash: r.tx_hash || null,
+                    unlocked_at: r.created_at,
+                    paid_at: r.processed_at || null
+                })),
+                // Available achievements (not yet unlocked by this wallet)
+                unlockedIds = new Set(rewards.map((r) => r.achievement_id)),
+                available = configs
+                    .filter((c) => !unlockedIds.has(c.key))
+                    .map((c) => ({
+                        achievement_id: c.key,
+                        name: c.name,
+                        desc: c.desc,
+                        reward_nut: c.reward_nut
+                    })),
+                responseBody = JSON.stringify({
+                    ok: true,
+                    wallet: truncateAddress(wallet),
+                    rewards: rewardList,
+                    available,
+                    total_earned: rewardList.reduce((sum, r) => sum + r.amount, 0),
+                    total_paid: rewardList
+                        .filter((r) => r.status === 'paid')
+                        .reduce((sum, r) => sum + r.amount, 0)
+                });
 
-            // Fetch all rewards for this wallet
-            const rewards = await rewardsCol
-                .find({ wallet })
-                .sort({ created_at: -1 })
-                .limit(50)
-                .toArray();
-
-            // Fetch all active achievement reward configs for display
-            const configs = await configCol
-                .find({ active: true })
-                .toArray();
-
-            const configMap = new Map(configs.map((c: any) => [c.key, c]));
-
-            // Build response — strip internal fields (ip, player_username)
-            const rewardList = rewards.map((r: any) => ({
-                achievement_id: r.achievement_id,
-                achievement_name: (configMap.get(r.achievement_id) as any)?.name || r.achievement_id,
-                achievement_desc: (configMap.get(r.achievement_id) as any)?.desc || '',
-                amount: r.amount,
-                status: r.status,
-                tx_hash: r.tx_hash || null,
-                unlocked_at: r.created_at,
-                paid_at: r.processed_at || null
-            }));
-
-            // Available achievements (not yet unlocked by this wallet)
-            const unlockedIds = new Set(rewards.map((r: any) => r.achievement_id));
-            const available = configs
-                .filter((c: any) => !unlockedIds.has(c.key))
-                .map((c: any) => ({
-                    achievement_id: c.key,
-                    name: c.name,
-                    desc: c.desc,
-                    reward_nut: c.reward_nut
-                }));
-
-            const responseBody = JSON.stringify({
-                ok: true,
-                wallet: truncateAddress(wallet),
-                rewards: rewardList,
-                available,
-                total_earned: rewardList.reduce((sum: number, r: any) => sum + r.amount, 0),
-                total_paid: rewardList.filter((r: any) => r.status === 'paid').reduce((sum: number, r: any) => sum + r.amount, 0)
-            });
-
-            if (!aborted) {
+            if (!aborted)
                 response.cork(() => {
                     response.writeHeader('Content-Type', 'application/json');
                     response.writeHeader('Access-Control-Allow-Origin', '*');
                     response.end(responseBody);
                 });
-            }
         } catch (error) {
             log.error('[ScoresAPI] GET /api/rewards error:');
             log.error(error);
-            if (!aborted) {
+            if (!aborted)
                 response.cork(() => {
                     response.writeStatus('500 Internal Server Error');
                     response.writeHeader('Content-Type', 'application/json');
                     response.writeHeader('Access-Control-Allow-Origin', '*');
                     response.end(JSON.stringify({ ok: false, error: 'internal_error' }));
                 });
-            }
         }
     }
 
@@ -509,11 +540,16 @@ export default class ScoresAPI {
 
     private respond(response: HttpResponse, aborted: boolean, status: number, body: object): void {
         if (aborted) return;
-        const statusText = status === 200 ? '200 OK' :
-                          status === 400 ? '400 Bad Request' :
-                          status === 429 ? '429 Too Many Requests' :
-                          status === 413 ? '413 Payload Too Large' :
-                          '500 Internal Server Error';
+        let statusText =
+            status === 200
+                ? '200 OK'
+                : status === 400
+                ? '400 Bad Request'
+                : status === 429
+                ? '429 Too Many Requests'
+                : status === 413
+                ? '413 Payload Too Large'
+                : '500 Internal Server Error';
         response.cork(() => {
             response.writeStatus(statusText);
             response.writeHeader('Content-Type', 'application/json');

@@ -4,14 +4,14 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
-/* ── Valid game slugs (must match SCORE_CAPS keys) ── */
+/* ── Valid game slugs (must match SCORE_CAPS keys in scores.ts) ── */
 
 export const VALID_GAME_SLUGS = [
     'mario',
     'survivors',
     'minigolf',
-    'kaetram',
-    'nutracer',
+    'racer',
+    'top-secret',
     'fuzzynuts-world'
 ] as const;
 
@@ -87,7 +87,4 @@ export const XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 export const SSE_MAX_ENTRIES = 50;
 export const SSE_HEARTBEAT_MS = 15_000;
 export const SSE_MAX_QUEUE = 10;
-export const SSE_CORS_ORIGINS = [
-    'https://fuzzynuts.xyz',
-    'https://www.fuzzynuts.xyz'
-];
+export const SSE_CORS_ORIGINS = ['https://fuzzynuts.xyz', 'https://www.fuzzynuts.xyz'];
