@@ -33,6 +33,9 @@ interface ClaimRecord {
     wallet: string;
     rank: number;
     amount: string;
+    usd_value?: number | null;
+    snapshot_price?: number | null;
+    nut_amount_paid?: string;
     score: number;
     status: string;
     createdAt: Date;
@@ -51,6 +54,31 @@ interface PrizeDistributionRecord {
     }>;
 }
 
+interface UsdTier {
+    rank: number;
+    usd: number;
+    label: string;
+}
+
+interface WeeklyTierDoc {
+    weekKey: string;
+    weekly_prize_usd_tiers: UsdTier[];
+    nut_price_snapshot_usd: number;
+    snapshot_timestamp: Date;
+    calculated_nut_amounts: string[];
+    cap_applied: boolean;
+    max_weekly_nut_emission: number;
+    price_source: string;
+}
+
+interface Winner {
+    wallet: string;
+    total: number;
+    rank: number;
+    usd_value?: number | null;
+    nut_amount?: string | null;
+}
+
 // ── Constants ──
 
 const NUT_CURRENCY = 'NUT';
@@ -66,11 +94,33 @@ const MAX_BODY_SIZE = 2048;
 const XRPL_ADDRESS_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 const WEEK_KEY_RE = /^\d{4}-W\d{2}$/;
 
-const PRIZES = [
-    { rank: 1, amount: '250000', label: '1st Place' },
-    { rank: 2, amount: '150000', label: '2nd Place' },
-    { rank: 3, amount: '100000', label: '3rd Place' }
+// Announced weekly prize values in USD. NUT amounts are computed at snapshot.
+const PRIZE_USD_TIERS: UsdTier[] = [
+    { rank: 1, usd: Number(process.env.PRIZE_USD_1 || 250), label: '1st Place' },
+    { rank: 2, usd: Number(process.env.PRIZE_USD_2 || 150), label: '2nd Place' },
+    { rank: 3, usd: Number(process.env.PRIZE_USD_3 || 100), label: '3rd Place' }
 ];
+
+// Soft cap on total NUT emitted per week (protects the Community Nut Jar). 2x legacy 500k.
+const MAX_WEEKLY_NUT_EMISSION = Number(process.env.MAX_WEEKLY_NUT_EMISSION || 1_000_000);
+
+// NUT AMM pool counter-asset. Default XRP. For a USD-stable pair set the
+// NUT_AMM_COUNTER_* vars and NUT_AMM_COUNTER_IS_XRP=false.
+const NUT_AMM_COUNTER_IS_XRP = (process.env.NUT_AMM_COUNTER_IS_XRP ?? 'true') === 'true';
+const NUT_AMM_COUNTER_CURRENCY = process.env.NUT_AMM_COUNTER_CURRENCY || '';
+const NUT_AMM_COUNTER_ISSUER = process.env.NUT_AMM_COUNTER_ISSUER || '';
+
+// On-chain XRP→USD reference AMM (used only when NUT is XRP-paired). Default RLUSD.
+const USD_REF_CURRENCY = process.env.USD_REF_CURRENCY || 'RLUSD';
+const USD_REF_ISSUER = process.env.USD_REF_ISSUER || 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De';
+
+// Off-chain fallback (USD per NUT). Used ONLY if the on-chain AMM query fails.
+const NUT_USD_PRICE_FALLBACK = process.env.NUT_USD_PRICE_FALLBACK
+    ? Number(process.env.NUT_USD_PRICE_FALLBACK)
+    : null;
+
+// Shared secret guarding the announcement-time snapshot endpoint.
+const REWARDS_ADMIN_SECRET = process.env.REWARDS_ADMIN_SECRET || '';
 
 // ── Rate limiting for claim endpoint ──
 
@@ -95,15 +145,100 @@ function getCurrentWeekKey(): string {
     return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
+// XRPL currency code normalizer: 'XRP' and standard 3-char codes pass through;
+// longer human codes (e.g. 'RLUSD') become their 160-bit hex form, which is what
+// rippled requires (ASCII 'RLUSD' returns issueMalformed).
+function xrplCurrency(code: string): string {
+    if (!code || code === 'XRP' || code.length === 3) return code;
+    if (/^[0-9A-Fa-f]{40}$/.test(code)) return code.toUpperCase();
+    return Buffer.from(code, 'ascii').toString('hex').toUpperCase().padEnd(40, '0');
+}
+
+// Price of `base` denominated in `counter` from an XRPL AMM pool.
+// XRP assets are passed as { currency: 'XRP' } (no issuer).
+async function ammPrice(client: any, base: any, counter: any): Promise<number> {
+    const info = await client.request({ command: 'amm_info', asset: base, asset2: counter });
+    const amm = info.result && info.result.amm;
+    if (!amm) throw new Error('amm_info returned no pool');
+
+    const toNum = (x: any) => (typeof x === 'string' ? Number(x) / 1_000_000 : Number(x.value)); // drops→XRP
+    const isXrp = (a: any) => a.currency === 'XRP' && !a.issuer;
+    const matches = (amt: any, asset: any) =>
+        typeof amt === 'string' ? isXrp(asset) : (amt.currency === asset.currency && amt.issuer === asset.issuer);
+
+    const baseAmt = matches(amm.amount, base) ? toNum(amm.amount) : toNum(amm.amount2);
+    const counterAmt = matches(amm.amount, base) ? toNum(amm.amount2) : toNum(amm.amount);
+    if (!(baseAmt > 0) || !(counterAmt > 0)) throw new Error('Empty AMM reserves');
+    return counterAmt / baseAmt; // counter units per 1 base
+}
+
+// Primary on-chain NUT/USD price. NUT/XRP × XRP/USD when XRP-paired, else NUT/<stable>.
+async function fetchNutUsdPrice(): Promise<{ price: number; source: string }> {
+    let xrpl: any;
+    try {
+        xrpl = require('xrpl');
+    } catch {
+        throw new Error('xrpl module not available');
+    }
+
+    let lastErr = '';
+    for (const server of XRPL_SERVERS) {
+        const client = new xrpl.Client(server, { connectionTimeout: XRPL_CONNECT_TIMEOUT_MS });
+        try {
+            await client.connect();
+            const NUT = { currency: xrplCurrency(NUT_CURRENCY), issuer: NUT_ISSUER };
+            let out: { price: number; source: string };
+            if (NUT_AMM_COUNTER_IS_XRP) {
+                const nutInXrp = await ammPrice(client, NUT, { currency: 'XRP' }); // XRP per NUT
+                const xrpInUsd = await ammPrice(
+                    client,
+                    { currency: 'XRP' },
+                    { currency: xrplCurrency(USD_REF_CURRENCY), issuer: USD_REF_ISSUER }
+                ); // USD per XRP
+                out = { price: nutInXrp * xrpInUsd, source: `amm:NUT/XRP*XRP/${USD_REF_CURRENCY}` };
+            } else {
+                const nutInUsd = await ammPrice(
+                    client,
+                    NUT,
+                    { currency: xrplCurrency(NUT_AMM_COUNTER_CURRENCY), issuer: NUT_AMM_COUNTER_ISSUER }
+                ); // USD per NUT
+                out = { price: nutInUsd, source: `amm:NUT/${NUT_AMM_COUNTER_CURRENCY}` };
+            }
+            try { await client.disconnect(); } catch { /* noop */ }
+            return out;
+        } catch (e: any) {
+            lastErr = e?.message || 'amm query failed';
+            try { await client.disconnect(); } catch { /* noop */ }
+        }
+    }
+    throw new Error(lastErr || 'all XRPL servers failed');
+}
+
+// USD tiers → integer NUT amounts (strings), applying the soft emission cap.
+function computeNutAmounts(priceUsd: number): { amounts: string[]; capApplied: boolean } {
+    const raw = PRIZE_USD_TIERS.map((t) => Math.floor(t.usd / priceUsd));
+    const total = raw.reduce((s, n) => s + n, 0);
+    let amounts = raw;
+    let capApplied = false;
+    if (total > MAX_WEEKLY_NUT_EMISSION) {
+        const factor = MAX_WEEKLY_NUT_EMISSION / total;
+        amounts = raw.map((n) => Math.floor(n * factor));
+        capApplied = true;
+    }
+    return { amounts: amounts.map(String), capApplied };
+}
+
 // ── API Handler Class ──
 
 export default class RewardsAPI {
     private scoresCol!: Collection;
     private prizesCol!: Collection<ClaimRecord>;
+    private tiersCol!: Collection;
 
     public constructor(private database: Db) {
         this.scoresCol = this.database.collection('arcade_scores');
         this.prizesCol = this.database.collection<ClaimRecord>('prize_distributions');
+        this.tiersCol = this.database.collection('weekly_prize_tiers');
         this.ensureIndexes();
         log.notice('[RewardsAPI] Prize rewards API initialized.');
     }
@@ -115,6 +250,8 @@ export default class RewardsAPI {
                 { weekKey: 1, wallet: 1, type: 1 },
                 { unique: true, partialFilterExpression: { type: 'individual_claim' } }
             );
+            // Unique index: one price snapshot per week
+            await this.tiersCol.createIndex({ weekKey: 1 }, { unique: true });
             log.info('[RewardsAPI] MongoDB indexes created.');
         } catch (error) {
             log.error('[RewardsAPI] Failed to create indexes:');
@@ -124,7 +261,7 @@ export default class RewardsAPI {
 
     // ── Top 3 Winners for a Week ──
 
-    private async getTopWinners(weekKey: string): Promise<Array<{ wallet: string; total: number; rank: number }>> {
+    private async getTopWinners(weekKey: string, snapshot: WeeklyTierDoc | null = null): Promise<Winner[]> {
         const scores = await this.scoresCol.find({ weekKey }).toArray();
         if (scores.length === 0) return [];
 
@@ -135,11 +272,70 @@ export default class RewardsAPI {
             playerMap.set(entry.wallet, existing + (entry.score || 0));
         }
 
-        return Array.from(playerMap.entries())
+        const ranked: Winner[] = Array.from(playerMap.entries())
             .map(([wallet, total]) => ({ wallet, total }))
             .sort((a, b) => b.total - a.total)
             .slice(0, 3)
             .map((entry, i) => ({ ...entry, rank: i + 1 }));
+
+        if (!snapshot) return ranked;
+        return ranked.map((w) => ({
+            ...w,
+            usd_value: snapshot.weekly_prize_usd_tiers[w.rank - 1]?.usd ?? null,
+            nut_amount: snapshot.calculated_nut_amounts[w.rank - 1] ?? null
+        }));
+    }
+
+    // ── Weekly Price Snapshot (announcement-time only) ──
+
+    private async getWeeklySnapshot(weekKey: string): Promise<WeeklyTierDoc | null> {
+        return (await this.tiersCol.findOne({ weekKey })) as unknown as WeeklyTierDoc | null;
+    }
+
+    private async createWeeklySnapshot(weekKey: string, force = false): Promise<WeeklyTierDoc> {
+        if (!force) {
+            const existing = await this.tiersCol.findOne({ weekKey });
+            if (existing) return existing as unknown as WeeklyTierDoc;
+        }
+
+        let price: number;
+        let source: string;
+        try {
+            ({ price, source } = await fetchNutUsdPrice());
+        } catch (err: any) {
+            if (NUT_USD_PRICE_FALLBACK != null) {
+                price = NUT_USD_PRICE_FALLBACK;
+                source = 'fallback:env';
+            } else {
+                throw new Error(`price snapshot failed and no fallback configured: ${err?.message}`);
+            }
+        }
+        if (!(price > 0) || !isFinite(price)) throw new Error('invalid NUT/USD price');
+
+        const { amounts, capApplied } = computeNutAmounts(price);
+        const doc: WeeklyTierDoc = {
+            weekKey,
+            weekly_prize_usd_tiers: PRIZE_USD_TIERS,
+            nut_price_snapshot_usd: price,
+            snapshot_timestamp: new Date(),
+            calculated_nut_amounts: amounts,
+            cap_applied: capApplied,
+            max_weekly_nut_emission: MAX_WEEKLY_NUT_EMISSION,
+            price_source: source
+        };
+
+        if (force) await this.tiersCol.replaceOne({ weekKey }, doc as any, { upsert: true });
+        else await this.tiersCol.updateOne({ weekKey }, { $setOnInsert: doc as any }, { upsert: true }); // first writer wins
+        return (await this.tiersCol.findOne({ weekKey })) as unknown as WeeklyTierDoc;
+    }
+
+    private tiersPayload(snapshot: WeeklyTierDoc): Array<{ rank: number; label: string; usd_value: number; nut_amount: string | null }> {
+        return snapshot.weekly_prize_usd_tiers.map((t, i) => ({
+            rank: t.rank,
+            label: t.label,
+            usd_value: t.usd,
+            nut_amount: snapshot.calculated_nut_amounts[i] ?? null
+        }));
     }
 
     // ── Check if Already Claimed ──
@@ -196,11 +392,20 @@ export default class RewardsAPI {
             // Validate / default week
             const weekKey = (weekParam && WEEK_KEY_RE.test(weekParam)) ? weekParam : getCurrentWeekKey();
 
-            // Get top 3
-            const winners = await this.getTopWinners(weekKey);
+            // Get top 3 (with snapshot-locked prize amounts when announced)
+            const snapshot = await this.getWeeklySnapshot(weekKey);
+            const winners = await this.getTopWinners(weekKey, snapshot);
             const match = winners.find(
                 (w) => w.wallet.toLowerCase() === wallet.toLowerCase()
             );
+
+            const snapshotMeta = {
+                announced: !!snapshot,
+                snapshot_price: snapshot ? snapshot.nut_price_snapshot_usd : null,
+                snapshot_timestamp: snapshot ? snapshot.snapshot_timestamp : null,
+                cap_applied: snapshot ? snapshot.cap_applied : null,
+                tiers: snapshot ? this.tiersPayload(snapshot) : null
+            };
 
             if (!match) {
                 return this.respond(response, aborted, 200, {
@@ -208,22 +413,27 @@ export default class RewardsAPI {
                     rank: null,
                     game: null,
                     prize: null,
+                    usd_value: null,
+                    nut_amount: null,
                     claimed: false,
-                    txHash: null
+                    txHash: null,
+                    ...snapshotMeta
                 });
             }
 
             // Check claimed status
             const { claimed, txHash } = await this.checkClaimed(weekKey, wallet);
-            const prize = PRIZES[match.rank - 1];
 
             return this.respond(response, aborted, 200, {
                 eligible: true,
                 rank: match.rank,
                 game: 'combined',
-                prize: parseInt(prize.amount, 10),
+                prize: match.nut_amount != null ? parseInt(match.nut_amount, 10) : null,
+                usd_value: match.usd_value ?? null,
+                nut_amount: match.nut_amount ?? null,
                 claimed,
-                txHash
+                txHash,
+                ...snapshotMeta
             });
 
         } catch (error) {
@@ -303,9 +513,18 @@ export default class RewardsAPI {
                 });
             }
 
-            // ── Re-verify eligibility (defense in depth) ──
+            // ── Snapshot is mandatory: NEVER price at claim time ──
 
-            const winners = await this.getTopWinners(weekKey);
+            const snapshot = await this.getWeeklySnapshot(weekKey);
+            if (!snapshot) {
+                return this.respond(response, aborted, 409, {
+                    error: 'not_announced'
+                });
+            }
+
+            // ── Re-verify eligibility against the locked snapshot (defense in depth) ──
+
+            const winners = await this.getTopWinners(weekKey, snapshot);
             const match = winners.find(
                 (w) => w.wallet.toLowerCase() === wallet.toLowerCase()
             );
@@ -316,10 +535,12 @@ export default class RewardsAPI {
                 });
             }
 
-            const prize = PRIZES[match.rank - 1];
-            if (!prize) {
-                return this.respond(response, aborted, 403, {
-                    error: 'no_prize_tier'
+            const nutAmount = match.nut_amount;
+            const usdValue = match.usd_value ?? null;
+            const snapshotPrice = snapshot.nut_price_snapshot_usd;
+            if (!nutAmount) {
+                return this.respond(response, aborted, 409, {
+                    error: 'prize_amount_unavailable'
                 });
             }
 
@@ -340,7 +561,9 @@ export default class RewardsAPI {
                 weekKey,
                 wallet,
                 rank: match.rank,
-                amount: prize.amount,
+                amount: nutAmount,
+                usd_value: usdValue,
+                snapshot_price: snapshotPrice,
                 score: match.total,
                 status: 'pending',
                 createdAt: new Date(),
@@ -432,13 +655,14 @@ export default class RewardsAPI {
                         Amount: {
                             currency: NUT_CURRENCY,
                             issuer: NUT_ISSUER,
-                            value: prize.amount
+                            value: nutAmount
                         },
                         Memos: [{
                             Memo: {
                                 MemoType: Buffer.from('fuzzynuts-arcade-prize', 'utf8').toString('hex').toUpperCase(),
                                 MemoData: Buffer.from(
-                                    `Fuzzynuts Reward W${weekKey} R${match.rank} Score:${match.total}`,
+                                    `Fuzzynuts Reward week=${weekKey} rank=${match.rank} usd_value=${usdValue} ` +
+                                    `snapshot_price=${snapshotPrice} nut_amount_paid=${nutAmount} score=${match.total}`,
                                     'utf8'
                                 ).toString('hex').toUpperCase()
                             }
@@ -455,12 +679,19 @@ export default class RewardsAPI {
                     try { await xrplClient.disconnect(); } catch { /* noop */ }
 
                     if (txResult === 'tesSUCCESS') {
-                        await this.updateClaimStatus(weekKey, wallet, 'success', txHash, undefined, txResult);
+                        await this.updateClaimStatus(weekKey, wallet, 'success', txHash, undefined, txResult, {
+                            nut_amount_paid: nutAmount,
+                            usd_value: usdValue,
+                            snapshot_price: snapshotPrice
+                        });
 
                         log.info(`[RewardsAPI] ✅ Claim successful: ${txHash}`);
                         return this.respond(response, aborted, 200, {
                             success: true,
-                            txHash
+                            txHash,
+                            nut_amount_paid: nutAmount,
+                            usd_value: usdValue,
+                            snapshot_price: snapshotPrice
                         });
                     } else {
                         await this.updateClaimStatus(weekKey, wallet, 'failed', null, txResult);
@@ -505,7 +736,8 @@ export default class RewardsAPI {
         status: string,
         txHash: string | null,
         error?: string,
-        xrplResult?: string
+        xrplResult?: string,
+        extra?: Record<string, unknown>
     ): Promise<void> {
         try {
             const $set: Record<string, unknown> = {
@@ -513,7 +745,8 @@ export default class RewardsAPI {
                 completedAt: new Date(),
                 ...(txHash != null && { txHash }),
                 ...(error && { error }),
-                ...(xrplResult && { xrplResult })
+                ...(xrplResult && { xrplResult }),
+                ...(extra || {})
             };
 
             // On success, remove stale error field entirely
@@ -631,8 +864,112 @@ export default class RewardsAPI {
             mongoConnected,
             xrplConnected,
             seedConfigured,
-            prizePool: PRIZES
+            prizePool: PRIZE_USD_TIERS
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  POST /api/rewards/snapshot   (admin: x-admin-secret header)
+    //  Body: { week?, force? } — locks the week's NUT/USD price + amounts
+    // ═══════════════════════════════════════════════════════════
+
+    public handleSnapshot(response: HttpResponse, request: HttpRequest): void {
+        let aborted = false;
+        response.onAborted(() => { aborted = true; });
+
+        // Headers must be read synchronously before onData.
+        const provided = request.getHeader('x-admin-secret');
+
+        let bodyBuffer = Buffer.alloc(0);
+        response.onData((chunk, isLast) => {
+            bodyBuffer = Buffer.concat([bodyBuffer, Buffer.from(chunk)]);
+
+            if (bodyBuffer.length > MAX_BODY_SIZE) {
+                return this.respond(response, aborted, 413, { error: 'payload_too_large' });
+            }
+
+            if (isLast) this.processSnapshot(bodyBuffer.toString(), provided, response, aborted);
+        });
+    }
+
+    private async processSnapshot(
+        body: string,
+        provided: string,
+        response: HttpResponse,
+        aborted: boolean
+    ): Promise<void> {
+        try {
+            if (!REWARDS_ADMIN_SECRET || provided !== REWARDS_ADMIN_SECRET) {
+                return this.respond(response, aborted, 401, { error: 'unauthorized' });
+            }
+
+            let data: any = {};
+            if (body && body.trim()) {
+                try { data = JSON.parse(body); } catch { data = {}; }
+            }
+
+            const week = data.week;
+            const force = !!data.force;
+            const weekKey = (week && WEEK_KEY_RE.test(week)) ? week : getCurrentWeekKey();
+
+            const snap = await this.createWeeklySnapshot(weekKey, force);
+            return this.respond(response, aborted, 200, {
+                ok: true,
+                weekKey,
+                nut_price_snapshot_usd: snap.nut_price_snapshot_usd,
+                snapshot_timestamp: snap.snapshot_timestamp,
+                calculated_nut_amounts: snap.calculated_nut_amounts,
+                cap_applied: snap.cap_applied,
+                price_source: snap.price_source
+            });
+        } catch (err: any) {
+            log.error('[RewardsAPI] Snapshot error:');
+            log.error(err);
+            return this.respond(response, aborted, 502, {
+                error: 'snapshot_failed',
+                detail: err?.message
+            });
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  GET /api/rewards/tiers?week=2026-W20   (wallet-independent)
+    // ═══════════════════════════════════════════════════════════
+
+    public async handleTiers(response: HttpResponse, request: HttpRequest): Promise<void> {
+        let aborted = false;
+        response.onAborted(() => { aborted = true; });
+
+        try {
+            const query = request.getQuery();
+            const params = new URLSearchParams(query);
+            const weekParam = params.get('week');
+            const weekKey = (weekParam && WEEK_KEY_RE.test(weekParam)) ? weekParam : getCurrentWeekKey();
+
+            const snapshot = await this.getWeeklySnapshot(weekKey);
+            if (!snapshot) {
+                return this.respond(response, aborted, 200, {
+                    announced: false,
+                    weekKey,
+                    tiers: null,
+                    snapshot_price: null,
+                    snapshot_timestamp: null
+                });
+            }
+
+            return this.respond(response, aborted, 200, {
+                announced: true,
+                weekKey,
+                tiers: this.tiersPayload(snapshot),
+                snapshot_price: snapshot.nut_price_snapshot_usd,
+                snapshot_timestamp: snapshot.snapshot_timestamp,
+                cap_applied: snapshot.cap_applied
+            });
+        } catch (error) {
+            log.error('[RewardsAPI] Tiers error:');
+            log.error(error);
+            return this.respond(response, aborted, 500, { error: 'internal_error' });
+        }
     }
 
     // ── CORS Preflight ──
@@ -641,7 +978,7 @@ export default class RewardsAPI {
         response.cork(() => {
             response.writeHeader('Access-Control-Allow-Origin', '*');
             response.writeHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            response.writeHeader('Access-Control-Allow-Headers', 'Content-Type');
+            response.writeHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-secret');
             response.writeHeader('Access-Control-Max-Age', '86400');
             response.end();
         });
@@ -653,6 +990,7 @@ export default class RewardsAPI {
         if (aborted) return;
         const statusText = status === 200 ? '200 OK' :
                           status === 400 ? '400 Bad Request' :
+                          status === 401 ? '401 Unauthorized' :
                           status === 403 ? '403 Forbidden' :
                           status === 404 ? '404 Not Found' :
                           status === 409 ? '409 Conflict' :

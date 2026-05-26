@@ -148,6 +148,28 @@ export default class UWS extends WebSocket {
             }
         });
 
+        // Public weekly prize tiers (USD value + pre-calculated NUT @ snapshot)
+        app.get('/api/rewards/tiers', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleTiers(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
+        // Announcement-time price snapshot (admin: x-admin-secret header)
+        app.post('/api/rewards/snapshot', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handleSnapshot(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
         app.options('/api/rewards/*', (res: HttpResponse) => {
             if (this.rewardsAPI) this.rewardsAPI.handleOptions(res);
             else {
