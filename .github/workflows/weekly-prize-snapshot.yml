@@ -1,0 +1,56 @@
+name: Weekly Prize Snapshot
+
+# Locks in the NUT/USD price + per-tier NUT amounts for the week by calling
+# POST /api/rewards/snapshot on the live backend. Runs automatically every
+# Monday 00:00 UTC, and can be run on demand via the "Run workflow" button
+# (use that once now to backfill the current week).
+#
+# Requires a repo Actions secret named REWARDS_ADMIN_SECRET, set to the SAME
+# value as the REWARDS_ADMIN_SECRET variable in Railway.
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # Mondays 00:00 UTC
+  workflow_dispatch:
+    inputs:
+      week:
+        description: 'Optional week key to snapshot (e.g. 2026-W22). Leave blank for the current week.'
+        required: false
+        default: ''
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger weekly prize snapshot
+        env:
+          ADMIN_SECRET: ${{ secrets.REWARDS_ADMIN_SECRET }}
+          WEEK: ${{ github.event.inputs.week }}
+        run: |
+          if [ -z "$ADMIN_SECRET" ]; then
+            echo "::error::Repo secret REWARDS_ADMIN_SECRET is not set. Add it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          if [ -n "$WEEK" ]; then
+            BODY="{\"week\":\"$WEEK\"}"
+          else
+            BODY='{}'
+          fi
+
+          echo "Requesting snapshot (body: $BODY)…"
+          CODE=$(curl -sS -o body.json -w '%{http_code}' \
+            -X POST https://world.fuzzynuts.xyz/api/rewards/snapshot \
+            -H "x-admin-secret: $ADMIN_SECRET" \
+            -H "content-type: application/json" \
+            -d "$BODY")
+
+          echo "HTTP $CODE"
+          cat body.json || true
+          echo ""
+
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Snapshot failed (HTTP $CODE). Check that the backend is deployed and NUT_USD_PRICE_FALLBACK / pricing env are set."
+            exit 1
+          fi
+          echo "✅ Snapshot succeeded."
