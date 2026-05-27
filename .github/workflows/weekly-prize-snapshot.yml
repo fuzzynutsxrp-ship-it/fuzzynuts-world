@@ -17,6 +17,10 @@ on:
         description: 'Optional week key to snapshot (e.g. 2026-W22). Leave blank for the current week.'
         required: false
         default: ''
+      force:
+        description: 'Overwrite an already-snapshotted week (true to redo a locked week).'
+        required: false
+        default: 'false'
 
 jobs:
   snapshot:
@@ -26,17 +30,17 @@ jobs:
         env:
           ADMIN_SECRET: ${{ secrets.REWARDS_ADMIN_SECRET }}
           WEEK: ${{ github.event.inputs.week }}
+          FORCE: ${{ github.event.inputs.force }}
         run: |
           if [ -z "$ADMIN_SECRET" ]; then
             echo "::error::Repo secret REWARDS_ADMIN_SECRET is not set. Add it in Settings → Secrets and variables → Actions."
             exit 1
           fi
 
-          if [ -n "$WEEK" ]; then
-            BODY="{\"week\":\"$WEEK\"}"
-          else
-            BODY='{}'
-          fi
+          BODY='{'
+          [ -n "$WEEK" ] && BODY="$BODY\"week\":\"$WEEK\","
+          [ "$FORCE" = "true" ] && BODY="$BODY\"force\":true,"
+          BODY="${BODY%,}}"
 
           echo "Requesting snapshot (body: $BODY)…"
           CODE=$(curl -sS -o body.json -w '%{http_code}' \
