@@ -104,6 +104,11 @@ const PRIZE_USD_TIERS: UsdTier[] = [
 // Soft cap on total NUT emitted per week (protects the Community Nut Jar). 2x legacy 500k.
 const MAX_WEEKLY_NUT_EMISSION = Number(process.env.MAX_WEEKLY_NUT_EMISSION || 1_000_000);
 
+// Price guard: only trust the on-chain AMM price when it is within this fraction
+// of the fallback anchor (default 25%). A thin/sniped pool can swing wildly, so
+// outside this band we use the controlled fallback price instead.
+const MAX_PRICE_DEVIATION = Number(process.env.MAX_PRICE_DEVIATION || 0.25);
+
 // NUT AMM pool counter-asset. Default XRP. For a USD-stable pair set the
 // NUT_AMM_COUNTER_* vars and NUT_AMM_COUNTER_IS_XRP=false.
 const NUT_AMM_COUNTER_IS_XRP = (process.env.NUT_AMM_COUNTER_IS_XRP ?? 'true') === 'true';
@@ -298,18 +303,45 @@ export default class RewardsAPI {
             if (existing) return existing as unknown as WeeklyTierDoc;
         }
 
+        // Resolve price with a deviation guard. A thin/sniped AMM can swing
+        // wildly, so we only trust the on-chain price when it is within
+        // MAX_PRICE_DEVIATION of the fallback anchor; otherwise we use the
+        // controlled fallback. With no fallback set, we trust the AMM (or fail).
+        let ammUsd: number | null = null;
+        let ammSource = '';
+        try {
+            const r = await fetchNutUsdPrice();
+            ammUsd = r.price;
+            ammSource = r.source;
+        } catch {
+            ammUsd = null;
+        }
+
+        const fb = NUT_USD_PRICE_FALLBACK;
         let price: number;
         let source: string;
-        try {
-            ({ price, source } = await fetchNutUsdPrice());
-        } catch (err: any) {
-            if (NUT_USD_PRICE_FALLBACK != null) {
-                price = NUT_USD_PRICE_FALLBACK;
-                source = 'fallback:env';
+
+        if (ammUsd != null && ammUsd > 0 && isFinite(ammUsd)) {
+            if (fb != null && fb > 0) {
+                const deviation = Math.abs(ammUsd - fb) / fb;
+                if (deviation <= MAX_PRICE_DEVIATION) {
+                    price = ammUsd;
+                    source = ammSource;
+                } else {
+                    price = fb;
+                    source = `fallback:amm-out-of-band(${Math.round(deviation * 100)}%)`;
+                }
             } else {
-                throw new Error(`price snapshot failed and no fallback configured: ${err?.message}`);
+                price = ammUsd;
+                source = ammSource;
             }
+        } else if (fb != null && fb > 0) {
+            price = fb;
+            source = 'fallback:env';
+        } else {
+            throw new Error('no usable price: AMM query failed and no fallback configured');
         }
+
         if (!(price > 0) || !isFinite(price)) throw new Error('invalid NUT/USD price');
 
         const { amounts, capApplied } = computeNutAmounts(price);
