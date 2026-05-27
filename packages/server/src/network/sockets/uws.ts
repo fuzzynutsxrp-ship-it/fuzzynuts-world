@@ -159,6 +159,17 @@ export default class UWS extends WebSocket {
             }
         });
 
+        // Public live price + market cap
+        app.get('/api/rewards/price', (res: HttpResponse, req: HttpRequest) => {
+            if (this.rewardsAPI) this.rewardsAPI.handlePrice(res, req);
+            else {
+                res.writeStatus('503 Service Unavailable');
+                res.writeHeader('Content-Type', 'application/json');
+                res.writeHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ ok: false, error: 'database_unavailable' }));
+            }
+        });
+
         // Announcement-time price snapshot (admin: x-admin-secret header)
         app.post('/api/rewards/snapshot', (res: HttpResponse, req: HttpRequest) => {
             if (this.rewardsAPI) this.rewardsAPI.handleSnapshot(res, req);

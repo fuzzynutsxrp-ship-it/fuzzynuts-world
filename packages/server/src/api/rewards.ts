@@ -127,6 +127,13 @@ const NUT_USD_PRICE_FALLBACK = process.env.NUT_USD_PRICE_FALLBACK
 // Shared secret guarding the announcement-time snapshot endpoint.
 const REWARDS_ADMIN_SECRET = process.env.REWARDS_ADMIN_SECRET || '';
 
+// Fixed total supply (for market-cap display on the public price endpoint).
+const NUT_TOTAL_SUPPLY = Number(process.env.NUT_TOTAL_SUPPLY || 321_000_000_000);
+
+// Live-price cache so the public /price endpoint doesn't hit XRPL on every hit.
+let _priceCache: { price: number; source: string; ts: number } | null = null;
+const PRICE_CACHE_MS = 60_000;
+
 // ── Rate limiting for claim endpoint ──
 
 const claimRateLimits: Map<string, number> = new Map();
@@ -231,6 +238,16 @@ function computeNutAmounts(priceUsd: number): { amounts: string[]; capApplied: b
         capApplied = true;
     }
     return { amounts: amounts.map(String), capApplied };
+}
+
+// Live NUT/USD price (raw AMM market price, not the guarded anchor), cached.
+async function getLivePriceUsd(): Promise<{ price: number; source: string; cached: boolean }> {
+    if (_priceCache && Date.now() - _priceCache.ts < PRICE_CACHE_MS) {
+        return { price: _priceCache.price, source: _priceCache.source, cached: true };
+    }
+    const { price, source } = await fetchNutUsdPrice();
+    _priceCache = { price, source, ts: Date.now() };
+    return { price, source, cached: false };
 }
 
 // ── API Handler Class ──
@@ -1001,6 +1018,29 @@ export default class RewardsAPI {
             log.error('[RewardsAPI] Tiers error:');
             log.error(error);
             return this.respond(response, aborted, 500, { error: 'internal_error' });
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  GET /api/rewards/price — live NUT price + market cap (public)
+    // ═══════════════════════════════════════════════════════════
+
+    public async handlePrice(response: HttpResponse, _request: HttpRequest): Promise<void> {
+        let aborted = false;
+        response.onAborted(() => { aborted = true; });
+        try {
+            const { price, source, cached } = await getLivePriceUsd();
+            return this.respond(response, aborted, 200, {
+                price_usd: price,
+                market_cap: price * NUT_TOTAL_SUPPLY,
+                total_supply: NUT_TOTAL_SUPPLY,
+                source,
+                cached
+            });
+        } catch (err: any) {
+            log.error('[RewardsAPI] Price error:');
+            log.error(err);
+            return this.respond(response, aborted, 502, { error: 'price_unavailable' });
         }
     }
 
